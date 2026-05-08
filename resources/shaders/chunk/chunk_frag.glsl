@@ -51,9 +51,12 @@ float rand(vec3 p) {
 void main()
 {
     vec3 normal = normalLookup[frag_normalID];
-    // get voxel color.
-    ivec3 localCoord = ivec3(floor((worldPos - chunkWorldPos-normal*0.5*voxelSizeMeters*2)/(voxelSizeMeters*2)));
-    uint matID = texelFetch(matIDTex, localCoord, 0).r;
+
+    // m / m per v
+    ivec3 localCoord = ivec3(((((worldPos-chunkWorldPos)/(voxelSizeMeters))-normal*0.5)));
+    ivec3 textureCoord = ivec3(((((worldPos-chunkWorldPos)/(voxelSizeMeters*2+0.001))-normal*0.5)-0.5*voxelSizeMeters));
+    uint matID = texelFetch(matIDTex, textureCoord, 0).x;
+    
     
     // hard coded until ID lookup can be used.
     //vec3 matSpecular = vec3(0.15);

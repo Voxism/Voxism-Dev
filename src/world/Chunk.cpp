@@ -22,11 +22,13 @@ void Chunk::generate(){
     float colorScale = 255.0f / (textureSize - 1);
     cTexData = std::vector<uint8_t>(textureSize*textureSize*textureSize);
     uint8_t* ptr = cTexData.data();
+    int change = 0;
     
 
     int yxOffset = cm.occupancyXsize*cm.occupancyYsize;
     for (int z=0; z<cm.occupancyZsize; z++)
     {
+        change++;
         for (int y=0; y<cm.occupancyYsize; y++)
         {
             for (int x=0; x<cm.occupancyXsize; x++)
@@ -44,14 +46,40 @@ void Chunk::generate(){
                 // fillMeterGrid(&occupancyInt, x, y, z);
 
                 // Fill color data
-                if (y%2 == 0 && z%2 == 0)
-                for (int bit=0; bit<32; bit+=2){
-                    if (y==0)*ptr++ = 0u;
-                    else *ptr++ = 1u;
-                    // *ptr++ = (32*x+bit) * colorScale;
-                    // *ptr++ = y * colorScale;
-                    // *ptr++ = z * colorScale;
-                    // *ptr++ = 255;;
+                // if (y%2 == 0 && z%2 == 0)
+                // for (int bit=0; bit<32; bit+=2){
+                //     if (y==0)*ptr++ = 0u;
+                //     else *ptr++ = 1u;
+                //     // *ptr++ = (32*x+bit) * colorScale;
+                //     // *ptr++ = y * colorScale;
+                //     // *ptr++ = z * colorScale;
+                //     // *ptr++ = 255;;
+                // }
+
+                if ((y & 1) == 0 && (z & 1) == 0)
+                {
+                    for (int bit = 0; bit < 32; bit += 2)
+                    {
+                        int voxelX = x * 32 + bit;
+    
+                        int texX = voxelX >> 1;
+                        int texY = y >> 1;
+                        int texZ = z >> 1;
+    
+                        int texIndex =
+                            texZ * textureSize * textureSize +
+                            texY * textureSize +
+                            texX;
+    
+                        // cTexData[texIndex] =
+                            // (y == 0) ? 0u : 1u;
+                        if (change%2==0){
+                            cTexData[texIndex] = 0u;
+                        } else {
+                            cTexData[texIndex] = 1u;
+                        }
+                        change++;
+                    }
                 }
             }
         }

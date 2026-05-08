@@ -1102,7 +1102,7 @@ private:
 	shared_ptr<ChunkManager> chunkManager = make_shared<ChunkManager>(
 	16,// voxPerMeter 
 	16,// chunkSizeMeters
-	32,// renderDistance (in meters)
+	16,// renderDistance (in meters)
 	16// renderHeight (int meters)
 	);
 
