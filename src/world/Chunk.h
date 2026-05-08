@@ -21,7 +21,7 @@ class ChunkManager;
 class Chunk
 {
     public:
-    // METHODS GENERALLY CALLED ONCE PER CHUNK
+        // METHODS GENERALLY CALLED ONCE PER CHUNK
         Chunk(ChunkManager& chunkManager, ChunkPos& cp); 
 
         // Generate the chunk
@@ -29,7 +29,7 @@ class Chunk
         // bind buffers
         void bindMesh();
 
-    // METHODS FOR UPDATING AND DRAWING
+        // METHODS FOR UPDATING AND DRAWING
         // Update the OccupancyInts array.
         void updateOccupancy();
 
@@ -42,10 +42,6 @@ class Chunk
 
         // update OccupancyInts
         void updateChunk(float deltaTime, bool gridFill, bool floor, bool sphere);
-
-
-        // void addVoxelAtWorldPos(const glm::vec3 &worldPos);
-        // void addVoxelAtIndex(int vx, int vy, int vz);
     
     private:
         ChunkManager& cm;
@@ -58,22 +54,14 @@ class Chunk
         void fillChunkGrid(uint32_t* occupancyInt, int x, int y, int z);
         void fillFloor(uint32_t* occupancyInt, glm::vec3* voxPosCenter, int x, int z);
 
+        // runs the algorithm with a int to find and add one greedy face.
         void addGreedyFace(uint32_t* posYMask, int maskIndex, float xPos, float yPos, float zPos, int direction);
+        // adding a quad given an anchor, start, extent, and direction.
         void addExtentQuad(float anchor, float uStart, float vStart, float uExtent, int vExtent, int dir);
-        // adds a quad to the mesh.
-        void addQuad(int side, float xPos, float yPos, float zPos);
-        // adds a complete cube primitive to the buffers for a given voxel position.
         void addCubePrimitive(glm::vec3* voxPos, int vertIndex);
-
-        // Information to be extracted later.
-        // float voxSizeMeters; // size of a voxel in meters.
-        // int chunkSizeInts; // number of ints needed to store the length of a chunk.
-        // int voxPerMeter;
     
         // int is 32 bits, so we can store 32 voxels in one int.
         std::vector<uint32_t>  occupancyInts;
-        // int occupancyXsize, occupancyYsize, occupancyZsize; 
-        // std::vector<uint32_t> userVoxels;
 
         // BUFFER RELATED THINGS
         void updateBuffer();

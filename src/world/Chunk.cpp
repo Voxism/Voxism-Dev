@@ -3,6 +3,9 @@
 
 Chunk::Chunk(ChunkManager& cm, ChunkPos& cp):
     cm(cm),
+    // 0: Normal buffer management with GL_STREAM_DRAW (dynamically decide buffer sizes.)
+    // 1: Utilize glMapBufferRange to then memcopy to memory. (predefine buffer sizes.)
+    // 2: Buffer orphaning and then glBufferSubData. (predefine buffer sizes.)
     bufferUpdateMethod(0), // set to either 0,1, or 2;
     modifierUpdateQueue()
     {
@@ -43,18 +46,7 @@ void Chunk::generate(){
                 );
                 fillFloor(&occupancyInt, &voxPosCenter, x, z);
                 fillChunkGrid(&occupancyInt, x, y, z);
-                // fillMeterGrid(&occupancyInt, x, y, z);
-
-                // Fill color data
-                // if (y%2 == 0 && z%2 == 0)
-                // for (int bit=0; bit<32; bit+=2){
-                //     if (y==0)*ptr++ = 0u;
-                //     else *ptr++ = 1u;
-                //     // *ptr++ = (32*x+bit) * colorScale;
-                //     // *ptr++ = y * colorScale;
-                //     // *ptr++ = z * colorScale;
-                //     // *ptr++ = 255;;
-                // }
+                fillMeterGrid(&occupancyInt, x, y, z);
 
                 if ((y & 1) == 0 && (z & 1) == 0)
                 {
@@ -94,7 +86,7 @@ void Chunk::generate(){
 // Generate the vertex array, vertex buffer, and color buffer.
 void Chunk::bindMesh()
 {
-    int size = 20000;
+    int size = 2500000;
     // VAO
     glGenVertexArrays(1, &vaoID);
     glBindVertexArray(vaoID);
@@ -203,11 +195,11 @@ void Chunk::updateOccupancy(){
 
 void Chunk::updateMesh()
 {
+    // Update Types
     // 0 = oringal
     // 1 = binaryMeshing
     // 2 = binaryMeshing and greedy meshing (WIP)
-    int updateType = 1;
-    bool greedyMeshing = true;
+    int updateType = 2;
     int debugMode = 1; // 0 = off, 1 = on.
     float start;
     if (debugMode == 1) start = glfwGetTime();
@@ -217,7 +209,7 @@ void Chunk::updateMesh()
     eBuff.clear();  
     nBuff.clear();
 
-    if (updateType == 1){
+    if (updateType >= 1){
         // CREATE BITMASKS
 
         // Allocate Memory 
@@ -244,8 +236,7 @@ void Chunk::updateMesh()
         uint32_t *posZMask = mask.data() + occupancyInts.size()*4;
         uint32_t *negZMask = mask.data() + occupancyInts.size()*5;
 
-        int yxOffset = cm.occupancyXsize*cm.occupancyYsize;
-        
+        int yxOffset = cm.occupancyXsize*cm.occupancyYsize;// prevent inner calculation every iteration
         // indexes into occupancyBits
         for (int z=0; z<cm.occupancyZsize; z++)
         {
@@ -256,7 +247,7 @@ void Chunk::updateMesh()
                     // Get occupancyInt
                     int occupancyIndex = z*yxOffset + y*cm.occupancyXsize + x;
                     uint32_t occupancyInt = occupancyInts[occupancyIndex];
-                    if (occupancyInt == 0u) continue;
+                    if (occupancyInt == 0u) continue; // do nothing if empty.
                     // reused variables for each case.
                     uint32_t occupancyIntMod;
                     uint32_t neighbor;
@@ -268,19 +259,22 @@ void Chunk::updateMesh()
                     // 001 000110 100 not
                     // 001 000100 100 and
                     // Positive X Faces
-                    if (x != cm.occupancyXsize-1){
+                    if (x != cm.occupancyXsize-1){ // make sure not at last x.
+                        // get the next x value.
                         neighbor = (occupancyInts[occupancyIndex+1]);
+                        // check next value for if the last bit of current should be culled.
                         carry = (neighbor!=0) && (0==__builtin_clz(neighbor));
-                        if (carry){
+                        if (carry){ // cull last bit because of neightbor
                             occupancyIntMod = (occupancyInt << 1u) | (1u); //carry one from the right
                         } else {
                             occupancyIntMod = occupancyInt << 1u;
                         }
-                    } else {
+                    } else {//if it is last x then just shift.
                         occupancyIntMod = occupancyInt << 1u;
                     }
+                    // compare shifted int with current for culling. see above for example.
                     occupancyIntMod = occupancyInt & ~(occupancyIntMod);
-                    posXMask[occupancyIndex] = occupancyIntMod;
+                    posXMask[occupancyIndex] = occupancyIntMod; //capture the culling bit.
 
                 //   0 i-1   ->   i+1 +X
                     // 001 011100 100 orig
@@ -346,7 +340,7 @@ void Chunk::updateMesh()
         }
         
         // Simple Quads
-        if (!greedyMeshing){
+        if (updateType == 1){
             // GENERATE QUADS FROM BITMASKS
             for (int z=0; z<cm.occupancyZsize; z++)
             {
@@ -363,51 +357,42 @@ void Chunk::updateMesh()
                         uint32_t posZint = posZMask[maskIndex];
                         uint32_t negZint = negZMask[maskIndex];
                         
-                        // float xPos = x*32*cm.voxSizeMeters; // x position of the voxel.
-                        // float yPos = y*cm.voxSizeMeters;
-                        // float zPos = z*cm.voxSizeMeters;
                         float xPos = x*32; // x position of the voxel.
                         float yPos = y;
                         float zPos = z;
             
-            
                         // loops until posXint is 0
-                        while (posXint){
+                        while (posXint){ //for every 1 bit within.
                             // counts the number of trailing zeros.
                             int bit = __builtin_ctz(posXint); // 0 to 31
                             // removes the closest trailing bit
                             posXint &= posXint-1;
-                            // addQuad(0, xPos+(31-bit)*cm.voxSizeMeters, yPos, zPos);
+                            // add face for the voxel in the direction of the mask. +x in this case.
                             addExtentQuad(xPos+(31-bit)+1, yPos, zPos, 1, 1, 0);
                         }
                         while (negXint){
                             int bit = __builtin_ctz(negXint);
                             negXint &= negXint-1;
-                            // addQuad(1, xPos+(31-bit)*cm.voxSizeMeters, yPos, zPos);
                             addExtentQuad(xPos+(31-bit), yPos, zPos, 1, 1, 1);
                         }
                         while(posYint){
                             int bit = __builtin_ctz(posYint);
                             posYint &= posYint-1;
-                            // addQuad(2, xPos+(31-bit)*cm.voxSizeMeters, yPos, zPos);
                             addExtentQuad(yPos+1, xPos+(31-bit), zPos, 1, 1, 2);
                         }
                         while(negYint){
                             int bit = __builtin_ctz(negYint);
                             negYint &= negYint-1;
-                            // addQuad(3, xPos+(31-bit)*cm.voxSizeMeters, yPos, zPos);
                             addExtentQuad(yPos, xPos+(31-bit), zPos, 1, 1, 3);
                         }
                         while(posZint){
                             int bit = __builtin_ctz(posZint);
                             posZint &= posZint-1;
-                            // addQuad(4, xPos+(31-bit)*cm.voxSizeMeters, yPos, zPos);
                             addExtentQuad(zPos+1, xPos+(31-bit), yPos , 1, 1, 4);
                         }
                         while(negZint){
                             int bit = __builtin_ctz(negZint);
                             negZint &= negZint-1;
-                            // addQuad(5, xPos+(31-bit)*cm.voxSizeMeters, yPos, zPos);
                             addExtentQuad(zPos, xPos+(31-bit), yPos, 1,1, 5);
                         }
                     }
@@ -423,7 +408,9 @@ void Chunk::updateMesh()
                     {
                         int maskIndex = z*yxOffset + y*cm.occupancyXsize + x;
 
+                        // go until the int in the mask has no more value.
                         while (posXMask[maskIndex] != 0u){
+                            // find the most it can extend the quad and add the quad.
                             addGreedyFace(posXMask, maskIndex, x*32, y, z, 0);
                         }
                         while (negXMask[maskIndex] != 0u){
@@ -518,7 +505,7 @@ void Chunk::drawMesh(const Program& prog)
     glEnableVertexAttribArray(normalAttr);
     glBindBuffer(GL_ARRAY_BUFFER, nBuffID);
     // glVertexAttribPointer(normalAttr, 3, GL_FLOAT, GL_FALSE, 0, (void*)0);
-    glVertexAttribPointer(normalAttr, 1, GL_UNSIGNED_INT, GL_FALSE, 0, (void*)0);
+    glVertexAttribIPointer(normalAttr, 1, GL_UNSIGNED_INT, 0, (void*)0);
 
     // COLOR TEXTURE
     GLuint colorTexUniform = prog.getUniform("matIDTex");
@@ -613,7 +600,6 @@ void Chunk::updateBuffer(){
         glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, eBuff.size()*sizeof(unsigned int), eBuff.data());
     }
     else if (bufferUpdateMethod == 1){
-        // memcpy(nPtr, nBuff.data(), nBuff.size()*sizeof(GLfloat));
         memcpy(nPtr, nBuff.data(), nBuff.size()*sizeof(GLuint));
         memcpy(vPtr, vBuff.data(), vBuff.size()*sizeof(GLfloat));
         memcpy(ePtr, eBuff.data(), eBuff.size()*sizeof(unsigned int));
@@ -621,7 +607,6 @@ void Chunk::updateBuffer(){
     else if (bufferUpdateMethod == 0){
         // PRIMITIVE BUFFER MANAGEMENT
         glBindBuffer(GL_ARRAY_BUFFER, nBuffID); 
-        // glBufferData(GL_ARRAY_BUFFER, nBuff.size()*sizeof(GLfloat), nBuff.data(), GL_STREAM_DRAW);   
         glBufferData(GL_ARRAY_BUFFER, nBuff.size()*sizeof(GLuint), nBuff.data(), GL_STREAM_DRAW);   
 
         glBindBuffer(GL_ARRAY_BUFFER, vBuffID);
@@ -635,9 +620,6 @@ void Chunk::updateBuffer(){
 void Chunk::addGreedyFace(uint32_t* mask, int maskIndex,
                           float xPos, float yPos, float zPos, int direction)
 {
-    // directions 2,3,4,5
-    // Doesn't work with +/-X
-
     if (direction == 0 || direction == 1){
         // +X / -X
     
@@ -729,6 +711,7 @@ void Chunk::addGreedyFace(uint32_t* mask, int maskIndex,
     
         bool tryNext = true;
         while (tryNext){
+            // get the next position row (by the correct direction)
             if ((direction == 2 || direction == 3)){
                 if ((int)zPos + height >= cm.occupancyZsize){
                     break;
@@ -743,12 +726,13 @@ void Chunk::addGreedyFace(uint32_t* mask, int maskIndex,
                 maskIndex = maskIndex + cm.occupancyXsize;
             }
             
+            // compare the new integer for the same 1's to see if we can expand the mesh.
             uint32_t* newCompareInt = &mask[maskIndex];
             if ( (compareInt & *newCompareInt) == compareInt){ //if it has similar width
                 *newCompareInt &= ~compareInt; // remove from newCompareInt
                 height++;
             } 
-            else {
+            else { // if we fail to expand end the loop and then add the quad.
                 tryNext = false;
             }
         }
@@ -772,10 +756,9 @@ void Chunk::addGreedyFace(uint32_t* mask, int maskIndex,
 }
 
  void Chunk::addExtentQuad(float anchor, float uStart, float vStart, float uExtent, int vExtent, int dir){
-
+    // index
     int vi = vBuff.size() / 3;
 
-    // colors
     float baseX, baseY, baseZ;
     if (dir == 0 || dir == 1) {
         baseX = anchor;
@@ -790,49 +773,35 @@ void Chunk::addGreedyFace(uint32_t* mask, int maskIndex,
         baseY = vStart;
         baseZ = anchor;
     }
-    // float red   = baseX / cm.chunkSizeMeters;
-    // float green = baseY / cm.chunkSizeMeters;
-    // float blue  = baseZ / cm.chunkSizeMeters;
-
-    float norm = dir%2 ? 1.0f : -1.0f;
 
     // X faces
     // dir 0=+x, 1=-x
     // anchor is x axis
     // u = Y
     // v = Z
-    if (dir == 0 || dir == 1) {
-        
+    if (dir == 0 || dir == 1) {   
         // v0
         vBuff.push_back(worldcp.x + anchor * cm.voxSizeMeters);
         vBuff.push_back(worldcp.y + (uStart+uExtent) * cm.voxSizeMeters);
         vBuff.push_back(worldcp.z + (vStart+vExtent) * cm.voxSizeMeters);
-
-        // nBuff.push_back(norm); nBuff.push_back(0.0f); nBuff.push_back(0.0f);
         nBuff.push_back(dir);
     
         // v1
         vBuff.push_back(worldcp.x + anchor * cm.voxSizeMeters);
         vBuff.push_back(worldcp.y + uStart * cm.voxSizeMeters);
         vBuff.push_back(worldcp.z + (vStart+vExtent) * cm.voxSizeMeters);
-    
-        // nBuff.push_back(norm); nBuff.push_back(0.0f); nBuff.push_back(0.0f);
         nBuff.push_back(dir);
     
         // v2
         vBuff.push_back(worldcp.x + anchor * cm.voxSizeMeters);
         vBuff.push_back(worldcp.y + uStart * cm.voxSizeMeters);
         vBuff.push_back(worldcp.z + vStart * cm.voxSizeMeters);
-    
-        // nBuff.push_back(norm); nBuff.push_back(0.0f); nBuff.push_back(0.0f);
         nBuff.push_back(dir);
     
         // v3
         vBuff.push_back(worldcp.x + anchor * cm.voxSizeMeters);
         vBuff.push_back(worldcp.y + (uStart+uExtent) * cm.voxSizeMeters);
         vBuff.push_back(worldcp.z + vStart * cm.voxSizeMeters);
-    
-        // nBuff.push_back(norm); nBuff.push_back(0.0f); nBuff.push_back(0.0f);
         nBuff.push_back(dir);
     }
 
@@ -845,33 +814,25 @@ void Chunk::addGreedyFace(uint32_t* mask, int maskIndex,
         // v0
         vBuff.push_back(worldcp.x + uStart * cm.voxSizeMeters);
         vBuff.push_back(worldcp.y + anchor * cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + (vStart+vExtent) * cm.voxSizeMeters);
-    
-        // nBuff.push_back(0.0f); nBuff.push_back(norm); nBuff.push_back(0.0f);
+        vBuff.push_back(worldcp.z + (vStart+vExtent) * cm.voxSizeMeters);    
         nBuff.push_back(dir);
     
         // v1
         vBuff.push_back(worldcp.x + (uStart+uExtent) * cm.voxSizeMeters);
         vBuff.push_back(worldcp.y + anchor * cm.voxSizeMeters);
         vBuff.push_back(worldcp.z + (vStart+vExtent) * cm.voxSizeMeters);
-    
-        // nBuff.push_back(0.0f); nBuff.push_back(norm); nBuff.push_back(0.0f);
         nBuff.push_back(dir);
     
         // v2
         vBuff.push_back(worldcp.x + (uStart+uExtent) * cm.voxSizeMeters);
         vBuff.push_back(worldcp.y + anchor * cm.voxSizeMeters);
         vBuff.push_back(worldcp.z + vStart * cm.voxSizeMeters);
-    
-        // nBuff.push_back(0.0f); nBuff.push_back(norm); nBuff.push_back(0.0f);
         nBuff.push_back(dir);
     
         // v3
         vBuff.push_back(worldcp.x + uStart * cm.voxSizeMeters);
         vBuff.push_back(worldcp.y + anchor * cm.voxSizeMeters);
         vBuff.push_back(worldcp.z + vStart * cm.voxSizeMeters);
-    
-        // nBuff.push_back(0.0f); nBuff.push_back(norm); nBuff.push_back(0.0f);
         nBuff.push_back(dir);
     }
 
@@ -885,32 +846,24 @@ void Chunk::addGreedyFace(uint32_t* mask, int maskIndex,
         vBuff.push_back(worldcp.x + uStart * cm.voxSizeMeters);
         vBuff.push_back(worldcp.y + (vStart+vExtent) * cm.voxSizeMeters);
         vBuff.push_back(worldcp.z + anchor * cm.voxSizeMeters);
-    
-        // nBuff.push_back(0.0f); nBuff.push_back(0.0f); nBuff.push_back(norm);
         nBuff.push_back(dir);
     
         // v1
         vBuff.push_back(worldcp.x + uStart * cm.voxSizeMeters);
         vBuff.push_back(worldcp.y + vStart * cm.voxSizeMeters);
         vBuff.push_back(worldcp.z + anchor * cm.voxSizeMeters);
-    
-        // nBuff.push_back(0.0f); nBuff.push_back(0.0f); nBuff.push_back(norm);
         nBuff.push_back(dir);
     
         // v2
         vBuff.push_back(worldcp.x + (uStart+uExtent) * cm.voxSizeMeters);
         vBuff.push_back(worldcp.y + vStart * cm.voxSizeMeters);
         vBuff.push_back(worldcp.z + anchor * cm.voxSizeMeters);
-    
-        // nBuff.push_back(0.0f); nBuff.push_back(0.0f); nBuff.push_back(norm);
         nBuff.push_back(dir);
     
         // v3
         vBuff.push_back(worldcp.x + (uStart+uExtent) * cm.voxSizeMeters);
         vBuff.push_back(worldcp.y + (vStart+vExtent) * cm.voxSizeMeters);
         vBuff.push_back(worldcp.z + anchor * cm.voxSizeMeters);
-    
-        // nBuff.push_back(0.0f); nBuff.push_back(0.0f); nBuff.push_back(norm);
         nBuff.push_back(dir);
     }
 
@@ -930,288 +883,6 @@ void Chunk::addGreedyFace(uint32_t* mask, int maskIndex,
         eBuff.push_back(vi+3);
         eBuff.push_back(vi+2);
     } 
-}
-
-void Chunk::addQuad(int side, float xPos, float yPos, float zPos){
-    float red = (xPos)/16.0f;
-    float green = (yPos)/16.0f;
-    float blue = (zPos)/16.0f;
-    // posX
-    if (side == 0){
-        // 0 ---- 3
-        // | \__  |
-        // |    \ |
-        // 1------2
-        int vertIndex = vBuff.size() / 3; // index of the first vertex for this voxel.
-        // 0 = top left
-        vBuff.push_back(worldcp.x + xPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 1*cm.voxSizeMeters);
-        // nBuff.push_back(1); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(0); // B
-        // 1 = bottom left
-        vBuff.push_back(worldcp.x + xPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 1*cm.voxSizeMeters);
-        // nBuff.push_back(1); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(0); // B
-        // 2 = bottom right
-        vBuff.push_back(worldcp.x + xPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 0*cm.voxSizeMeters);
-        // nBuff.push_back(1); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(0); // B
-        // 3 = top right
-        vBuff.push_back(worldcp.x + xPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 0*cm.voxSizeMeters);
-        // nBuff.push_back(1); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(0); // B
-        nBuff.push_back(side); nBuff.push_back(side); nBuff.push_back(side); nBuff.push_back(side);
-
-        // tri 1
-        eBuff.push_back(vertIndex + 0);
-        eBuff.push_back(vertIndex + 2);
-        eBuff.push_back(vertIndex + 3);
-        // tri 2
-        eBuff.push_back(vertIndex + 0);
-        eBuff.push_back(vertIndex + 1);
-        eBuff.push_back(vertIndex + 2);
-    }
-    // negX
-    else if (side == 1){
-        // 0 ---- 3
-        // | \__  |
-        // |    \ |
-        // 1------2
-        int vertIndex = vBuff.size() / 3; // index of the first vertex for this voxel.
-        // 0 = top left
-        vBuff.push_back(worldcp.x + xPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 0*cm.voxSizeMeters);
-        // nBuff.push_back(-1); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(0); // B
-        // 1 = bottom left
-        vBuff.push_back(worldcp.x + xPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 0*cm.voxSizeMeters);
-        // nBuff.push_back(-1); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(0); // B
-        // 2 = bottom right
-        vBuff.push_back(worldcp.x + xPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 1*cm.voxSizeMeters);
-        // nBuff.push_back(-1); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(0); // B
-        // 3 = top right
-        vBuff.push_back(worldcp.x + xPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 1*cm.voxSizeMeters);
-        // nBuff.push_back(-1); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(0); // B
-        nBuff.push_back(side); nBuff.push_back(side); nBuff.push_back(side); nBuff.push_back(side);
-
-        // tri 1
-        eBuff.push_back(vertIndex + 0);
-        eBuff.push_back(vertIndex + 2);
-        eBuff.push_back(vertIndex + 3);
-        // tri 2
-        eBuff.push_back(vertIndex + 0);
-        eBuff.push_back(vertIndex + 1);
-        eBuff.push_back(vertIndex + 2);
-    }
-    // posY
-    else if (side == 2){
-        // 0 ---- 3
-        // | \__  |
-        // |    \ |
-        // 1------2
-        int vertIndex = vBuff.size() / 3; // index of the first vertex for this voxel.
-        // 0 = top left
-        vBuff.push_back(worldcp.x + xPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 0*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(1); // G
-        // nBuff.push_back(0); // B
-        // 1 = bottom left
-        vBuff.push_back(worldcp.x + xPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 1*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(1); // G
-        // nBuff.push_back(0); // B
-        // 2 = bottom right
-        vBuff.push_back(worldcp.x + xPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 1*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(1); // G
-        // nBuff.push_back(0); // B
-        // 3 = top right
-        vBuff.push_back(worldcp.x + xPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 0*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(1); // G
-        // nBuff.push_back(0); // B
-        nBuff.push_back(side); nBuff.push_back(side); nBuff.push_back(side); nBuff.push_back(side);
-
-        // tri 1
-        eBuff.push_back(vertIndex + 0);
-        eBuff.push_back(vertIndex + 2);
-        eBuff.push_back(vertIndex + 3);
-        // tri 2
-        eBuff.push_back(vertIndex + 0);
-        eBuff.push_back(vertIndex + 1);
-        eBuff.push_back(vertIndex + 2);
-    }
-    // negY
-    else if (side == 3){
-        // 0 ---- 3
-        // | \__  |
-        // |    \ |
-        // 1------2
-        int vertIndex = vBuff.size() / 3; // index of the first vertex for this voxel.
-        // 0 = top left
-        vBuff.push_back(worldcp.x + xPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 0*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(-1); // G
-        // nBuff.push_back(0); // B
-        // 1 = bottom left
-        vBuff.push_back(worldcp.x + xPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 1*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(-1); // G
-        // nBuff.push_back(0); // B
-        // 2 = bottom right
-        vBuff.push_back(worldcp.x + xPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 1*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(-1); // G
-        // nBuff.push_back(0); // B
-        // 3 = top right
-        vBuff.push_back(worldcp.x + xPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 0*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(-1); // G
-        // nBuff.push_back(0); // B
-        nBuff.push_back(side); nBuff.push_back(side); nBuff.push_back(side); nBuff.push_back(side);
-
-        // tri 1
-        eBuff.push_back(vertIndex + 0);
-        eBuff.push_back(vertIndex + 2);
-        eBuff.push_back(vertIndex + 3);
-        // tri 2
-        eBuff.push_back(vertIndex + 0);
-        eBuff.push_back(vertIndex + 1);
-        eBuff.push_back(vertIndex + 2);
-    }
-    // posZ
-    else if (side == 4){
-        // 0 ---- 3
-        // | \__  |
-        // |    \ |
-        // 1------2
-        int vertIndex = vBuff.size() / 3; // index of the first vertex for this voxel.
-        // 0 = top left
-        vBuff.push_back(worldcp.x + xPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 1*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(1); // B
-
-                // 1 = bottom left
-        vBuff.push_back(worldcp.x + xPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 1*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(1); // B        
-                // 2 = bottom right
-        vBuff.push_back(worldcp.x + xPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 1*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(1); // B
-        // 3 = top right
-        vBuff.push_back(worldcp.x + xPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 1*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(1); // B
-        nBuff.push_back(side); nBuff.push_back(side); nBuff.push_back(side); nBuff.push_back(side);
-
-        // tri 1
-        eBuff.push_back(vertIndex + 0);
-        eBuff.push_back(vertIndex + 2);
-        eBuff.push_back(vertIndex + 3);
-        // tri 2
-        eBuff.push_back(vertIndex + 0);
-        eBuff.push_back(vertIndex + 1);
-        eBuff.push_back(vertIndex + 2);
-    }
-    // negZ
-    else if (side == 5){
-        // 0 ---- 3
-        // | \__  |
-        // |    \ |
-        // 1------2
-        int vertIndex = vBuff.size() / 3; // index of the first vertex for this voxel.
-        // 0 = top left
-        vBuff.push_back(worldcp.x + xPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 0*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(-1); // B
-        // 1 = bottom left
-        vBuff.push_back(worldcp.x + xPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 0*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(-1); // B
-        // 2 = bottom right
-        vBuff.push_back(worldcp.x + xPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 0*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(-1); // B
-        // 3 = top right
-        vBuff.push_back(worldcp.x + xPos + 0*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.y + yPos + 1*cm.voxSizeMeters);
-        vBuff.push_back(worldcp.z + zPos + 0*cm.voxSizeMeters);
-        // nBuff.push_back(0); // R
-        // nBuff.push_back(0); // G
-        // nBuff.push_back(-1); // B
-        nBuff.push_back(side); nBuff.push_back(side); nBuff.push_back(side); nBuff.push_back(side);
-        // tri 1
-        eBuff.push_back(vertIndex + 0);
-        eBuff.push_back(vertIndex + 2);
-        eBuff.push_back(vertIndex + 3);
-        // tri 2
-        eBuff.push_back(vertIndex + 0);
-        eBuff.push_back(vertIndex + 1);
-        eBuff.push_back(vertIndex + 2);
-        }
 }
 
 void Chunk::addCubePrimitive(glm::vec3* voxPos, int vertIndex)
@@ -1235,9 +906,7 @@ void Chunk::addCubePrimitive(glm::vec3* voxPos, int vertIndex)
                 vBuff.push_back(worldcp.y + voxPos->y + dy*cm.voxSizeMeters);
                 vBuff.push_back(worldcp.z + voxPos->z + dz*cm.voxSizeMeters);
 
-                nBuff.push_back(dx == 0 ? -1 : 1); // R
-                nBuff.push_back(dy == 0 ? -1 : 1); // G
-                nBuff.push_back(dz == 0 ? -1 : 1); // B
+                nBuff.push_back(2u);//normal up.
             }
         }
     }
