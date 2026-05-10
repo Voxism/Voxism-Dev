@@ -19,7 +19,8 @@
 #include "GameWorld.h"
 #include "GltfMesh.h"
 #include "Skybox.h"
-#include "FirstPersonCamera.h"
+#include "camera/FirstPersonCamera.h"
+#include "camera/FreeCamera.h"
 #include "GLSL.h"
 #include "MatrixStack.h"
 #include "Program.h"
@@ -737,7 +738,22 @@ public:
 			}
 		}
 
-		thirdPersonCam_.ProcessKeypress(key, action);
+		if (key == GLFW_KEY_X && action == GLFW_PRESS) {
+			if (camera == &fpvCamera) {
+				freeCamera.SetState(
+					fpvCamera.GetCameraPos(),
+					fpvCamera.GetYaw(),
+					fpvCamera.GetPitch(),
+					fpvCamera.GetFOV()
+				);
+
+				camera = &freeCamera;
+			} else {
+				camera = &fpvCamera;
+			}
+		}
+
+		camera->ProcessKeypress(key, action);
 
 		// if (key == GLFW_KEY_SPACE && action == GLFW_PRESS)
 		// 	player_.tryJump();
@@ -797,8 +813,8 @@ public:
 				return;
 			}
 
-			glm::vec3 eye = thirdPersonCam_.GetCameraPos();
-			glm::vec3 forward = glm::normalize(thirdPersonCam_.GetForward());
+			glm::vec3 eye = camera->GetCameraPos();
+			glm::vec3 forward = glm::normalize(camera->GetForward());
 			glm::vec3 placePos = eye + forward * 1.0f;
 			// chunk->addVoxelAtWorldPos(placePos);
 			// chunk->updateMesh();
@@ -831,20 +847,20 @@ public:
 		double dy = lastMouseY_ - ypos;
 		lastMouseX_ = xpos;
 		lastMouseY_ = ypos;
-		thirdPersonCam_.ProcessMouseMovement(dx, dy);
+		camera->ProcessMouseMovement(dx, dy);
 	}
 
 	void scrollCallback(GLFWwindow *window, double xoffset, double yoffset) override
 	{
 		(void)window;
 		(void)xoffset;
-		thirdPersonCam_.ProcessScroll(yoffset);
+		camera->ProcessScroll(yoffset);
 	}
 
 	void updateFixedStep(float dt)
 	{
 		vec3 wish = (static_cast<float>(keyW_) - static_cast<float>(keyS_)) * vec3(1,1,1) + (static_cast<float>(keyD_) - static_cast<float>(keyA_)) * vec3(1,1,1);
-		thirdPersonCam_.UpdateCamera(dt);
+		camera->UpdateCamera(dt);
 		
 		toolView_.update(dt);
 
@@ -854,7 +870,7 @@ public:
 
 	void drawScene3D(const mat4 &P, const mat4 &V)
 	{
-		vec3 eye = thirdPersonCam_.GetCameraPos();
+		vec3 eye = camera->GetCameraPos();
 		mat4 Vsky = glm::mat4(glm::mat3(V));
 
 		vec3 lightColor(1.0f, 0.98f, 0.92f);
@@ -917,9 +933,9 @@ public:
 		float aspect = width / (float)height;
 		MatrixStack Pstack;
 		Pstack.pushMatrix();
-		Pstack.perspective(glm::radians(thirdPersonCam_.GetFOV()), aspect, 0.1f, 2000.0f);
+		Pstack.perspective(glm::radians(camera->GetFOV()), aspect, 0.1f, 2000.0f);
 		mat4 P = Pstack.topMatrix();
-		mat4 V = thirdPersonCam_.GetViewMatrix();
+		mat4 V = camera->GetViewMatrix();
 		Pstack.popMatrix();
 
 		// --- Scene HDR framebuffer (brighter clear helps god-ray mask) ---
@@ -1035,15 +1051,15 @@ public:
 		compositeProg_->unbind();
 
 		// tool
-		glm::vec3 eye = thirdPersonCam_.GetCameraPos();
+		glm::vec3 eye = camera->GetCameraPos();
 		glm::vec3 lightColor(1.0f, 0.98f, 0.92f);
 
 		toolView_.draw(width, height,
 					V,
 					eye,
-					thirdPersonCam_.GetForward(),
-					thirdPersonCam_.GetRight(),
-					thirdPersonCam_.GetUp(),
+					camera->GetForward(),
+					camera->GetRight(),
+					camera->GetUp(),
 					sunWorld_,
 					lightColor);
 		
@@ -1064,9 +1080,9 @@ public:
 
 		ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
 		ImGui::Text("Camera Pos: %.2f %.2f %.2f",
-					thirdPersonCam_.GetCameraPos().x,
-					thirdPersonCam_.GetCameraPos().y,
-					thirdPersonCam_.GetCameraPos().z);
+					camera->GetCameraPos().x,
+					camera->GetCameraPos().y,
+					camera->GetCameraPos().z);
 
 		ImGui::Checkbox("God Rays", &postToggles_.godRaysEnabled);
 		ImGui::Checkbox("Bloom", &postToggles_.bloomEnabled);
@@ -1086,7 +1102,9 @@ private:
 	float moveBlendDisplay_ = 0.0f;
 	float characterScale_ = 1.0f;
 
-	FirstPersonCamera thirdPersonCam_;
+	FirstPersonCamera fpvCamera;
+	FreeCamera freeCamera;
+	Camera* camera = &fpvCamera;
 	ToolView toolView_;
 	Crosshair crosshair_;
 	Skybox skybox_;
