@@ -37,8 +37,8 @@ void Materials::init(GLuint bindingPoint){
     glBindBuffer(GL_UNIFORM_BUFFER, matBuffID);
     glBufferData(GL_UNIFORM_BUFFER, sizeof(Material)*materials.size(), materials.data(), GL_STATIC_DRAW);
     // remember index for later and bind buffer to the index.
-    bindingPoint = bindingPoint;
-    glBindBufferBase(GL_UNIFORM_BUFFER, bindingPoint, matBuffID);
+    this->bindingPoint = bindingPoint;
+    glBindBufferBase(GL_UNIFORM_BUFFER, this->bindingPoint, matBuffID);
 }
 
 // typically a set once and forget.

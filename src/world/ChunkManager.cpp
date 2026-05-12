@@ -9,6 +9,8 @@ ChunkManager::ChunkManager(
     chunkSizeMeters(chunkSizeMeters),
     renderDistance(renderDistance),
     renderHeight(renderHeight),
+    terrainMinChunks(0),
+    terrainMaxChunks(0),
     occupancyUpdateQueue(),
     meshUpdateQueue()
 {
@@ -22,6 +24,9 @@ ChunkManager::ChunkManager(
 
     occupancyXsize = chunkSizeInts;
     occupancyYsize = occupancyZsize = chunkSizeInts*32;
+    terrainMinChunks = static_cast<int>(-renderHeight / this->chunkSizeMeters);
+    terrainMaxChunks = static_cast<int>(renderHeight / this->chunkSizeMeters);
+    terrainGenerator = std::make_unique<TerrainGenerator>(terrainMinChunks, terrainMaxChunks, this->chunkSizeMeters, 1337u);
 };
 
 ChunkPos ChunkManager::getChunkPos(glm::vec3& pos){
@@ -73,7 +78,7 @@ void ChunkManager::updateChunks(){
 void ChunkManager::drawChunks(const Program& prog){
     
     for (int z = -renderDistance/chunkSizeMeters; z<renderDistance/chunkSizeMeters; z++){
-        for (int y = -renderHeight/chunkSizeMeters; y<renderHeight/chunkSizeMeters; y++){
+        for (int y = terrainMinChunks; y<=terrainMaxChunks; y++){
             for (int x = -renderDistance/chunkSizeMeters; x<renderDistance/chunkSizeMeters; x++){
                 ChunkPos chunkPos = ChunkPos{x, y, z};
                 auto chunk = chunkMap.find(chunkPos);
@@ -89,5 +94,4 @@ void ChunkManager::drawChunks(const Program& prog){
         }
     }
 }
-
 
