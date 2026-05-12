@@ -9,12 +9,14 @@
 #include <iomanip>
 #include <deque>
 #include "modifiers/IChunkModifier.h"
+#include "TerrainGenerator.h"
 
 class ChunkManager {
     public:
         //initialize with the standard size of the world chunks.
         ChunkManager(int voxPerMeter, float chunkSizeMeters, int renderDistance, int renderHeight);
         int renderDistance, renderHeight;
+        int terrainMinChunks, terrainMaxChunks;
         int voxPerMeter; // how many voxels there are per meter
         float voxSizeMeters; // how large in meters each voxel is.
         float chunkSizeMeters; // how many meters is the width of the chunk.
@@ -44,6 +46,7 @@ class ChunkManager {
 
         std::shared_ptr<Chunk> generateChunk(ChunkPos& chunkPos);
         std::shared_ptr<Chunk> getOrCreateChunk(const ChunkPos &chunkPos);
+        const TerrainGenerator& terrain() const { return *terrainGenerator; }
 
         // Modify chunk is given the modifier that is then parsed and attached to the chunks it effects.
         // Chunks are then marked and setup for occupancy updates.
@@ -68,6 +71,7 @@ class ChunkManager {
             }
         };
         std::unordered_map<ChunkPos, std::shared_ptr<Chunk>, ChunkPosHash> chunkMap;
+        std::unique_ptr<TerrainGenerator> terrainGenerator;
 
         std::deque<std::shared_ptr<Chunk>> occupancyUpdateQueue;
         std::deque<std::shared_ptr<Chunk>> meshUpdateQueue;

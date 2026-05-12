@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.4)
+cmake_minimum_required(VERSION 3.12)
 include("${CMAKE_SOURCE_DIR}/FindGfxLibs.cmake")
 
 # Name of the project
@@ -45,14 +45,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED 14)
 set(CMAKE_CXX_STANDARD 14)
 
 # Use glob to get the list of all source files.
-file(GLOB_RECURSE SOURCES "${CMAKE_SOURCE_DIR}/src/*.cpp" "${CMAKE_SOURCE_DIR}/ext/*/*.cpp" "${CMAKE_SOURCE_DIR}/ext/glad/src/*.c")
+# CONFIGURE_DEPENDS makes CMake re-check globs on each build so newly added
+# files (e.g. src/world/*.cpp) are picked up without manually re-running cmake.
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/src/*.cpp"
+    "${CMAKE_SOURCE_DIR}/ext/*/*.cpp"
+    "${CMAKE_SOURCE_DIR}/ext/glad/src/*.c")
 # Exclude standalone test files (they define their own main())
 list(FILTER SOURCES EXCLUDE REGEX ".*/src/tests/.*\\.cpp$")
 
 # We don't really need to include header and resource files to build, but it's
 # nice to have them show up in IDEs.
-file(GLOB_RECURSE HEADERS "src/*.h" "ext/*/*.h" "ext/glad/*/*.h")
-file(GLOB_RECURSE GLSL "resources/*.glsl")
+file(GLOB_RECURSE HEADERS CONFIGURE_DEPENDS "src/*.h" "ext/*/*.h" "ext/glad/*/*.h")
+file(GLOB_RECURSE GLSL CONFIGURE_DEPENDS "resources/*.glsl")
 
 include_directories("ext")
 include_directories("ext/glad/include")

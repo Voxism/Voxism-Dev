@@ -68,8 +68,8 @@ class Chunk
         glm::ivec3 materialDirtyMin_ = glm::ivec3(0);
         glm::ivec3 materialDirtyMax_ = glm::ivec3(0);
 
-        // For each voxel in occupancyInts will fill an outlining grid.
-        // Works with verious voxel and chunk sizes.
+        void fillTerrain(uint32_t* occupancyInt, int x, int y, int z, const float* heightMap);
+
         void fillMeterGrid(uint32_t* occupancyInt, int x, int y, int z);
         void fillChunkGrid(uint32_t* occupancyInt, int x, int y, int z);
         void fillFloor(uint32_t* occupancyInt, glm::vec3* voxPosCenter, int x, int z);
