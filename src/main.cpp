@@ -31,6 +31,8 @@
 #include "world/Materials.h"
 #include "Tool.h"
 #include "Crosshair.h"
+#include "tools/ToolManager.h"
+#include "tools/ToolPreviewRenderer.h"
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_glfw.h>
@@ -262,6 +264,8 @@ public:
 		toolView_.setRotationDeg(vec3(-15.0f, 180.0f, -12.0f));
 		toolView_.setScale(vec3(0.05f, 0.05f, 0.85f));
 		toolView_.setFov(55.0f);
+		if (!previewRenderer_.init(resourceDirectory))
+			cerr << "previewRenderer init failed" << endl;
 
 		crosshair_.init(resourceDirectory);
 		crosshair_.setSize(8.0f);
@@ -732,6 +736,8 @@ public:
 		if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
 			mouseLocked_ = false;
 			firstMouse_ = true;
+			leftMouseDown_ = false;
+			toolManager_.endPrimaryAction();
 			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 			if (glfwRawMouseMotionSupported()) {
 				glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
@@ -813,12 +819,16 @@ public:
 				return;
 			}
 
+			leftMouseDown_ = true;
 			glm::vec3 eye = camera->GetCameraPos();
 			glm::vec3 forward = glm::normalize(camera->GetForward());
-			glm::vec3 placePos = eye + forward * 1.0f;
-			// chunk->addVoxelAtWorldPos(placePos);
-			// chunk->updateMesh();
-			toolView_.triggerUse();
+			if (toolManager_.beginPrimaryAction(*chunkManager, eye, forward)) {
+				toolView_.triggerUse();
+			}
+		}
+		if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
+			leftMouseDown_ = false;
+			toolManager_.endPrimaryAction();
 		}
 	}
 
@@ -861,6 +871,14 @@ public:
 	{
 		vec3 wish = (static_cast<float>(keyW_) - static_cast<float>(keyS_)) * vec3(1,1,1) + (static_cast<float>(keyD_) - static_cast<float>(keyA_)) * vec3(1,1,1);
 		camera->UpdateCamera(dt);
+
+		if (mouseLocked_ && leftMouseDown_ && toolManager_.supportsContinuousPrimaryAction()) {
+			const glm::vec3 eye = camera->GetCameraPos();
+			const glm::vec3 forward = glm::normalize(camera->GetForward());
+			if (toolManager_.updatePrimaryAction(*chunkManager, eye, forward)) {
+				toolView_.triggerUse();
+			}
+		}
 		
 		toolView_.update(dt);
 
@@ -886,6 +904,9 @@ public:
 		glUniform3fv(chunkProg_->getUniform("lightColor"), 1, value_ptr(lightColor));
 		chunkManager->drawChunks(*chunkProg_);
 		chunkProg_->unbind();
+
+		ToolPreview preview = toolManager_.getPreview(*chunkManager, eye, glm::normalize(camera->GetForward()));
+		previewRenderer_.draw(preview, chunkManager->voxSizeMeters, P, V);
 
 		skybox_.draw(P, Vsky);
 
@@ -1087,6 +1108,7 @@ public:
 		ImGui::Checkbox("God Rays", &postToggles_.godRaysEnabled);
 		ImGui::Checkbox("Bloom", &postToggles_.bloomEnabled);
 		ImGui::Checkbox("SSAO", &postToggles_.ssaoEnabled);
+		toolManager_.drawImGui();
 
 		ImGui::End();
 		ImGui::Render();
@@ -1106,6 +1128,8 @@ private:
 	FreeCamera freeCamera;
 	Camera* camera = &fpvCamera;
 	ToolView toolView_;
+	ToolManager toolManager_;
+	ToolPreviewRenderer previewRenderer_;
 	Crosshair crosshair_;
 	Skybox skybox_;
 	// GltfMesh characterMesh_;
@@ -1160,6 +1184,7 @@ private:
 
 	bool mouseLocked_ = false;
 	bool firstMouse_ = true;
+	bool leftMouseDown_ = false;
 	double lastMouseX_ = 0.0, lastMouseY_ = 0.0;
 
 	double lastStatsPrint_ = 0.0;
