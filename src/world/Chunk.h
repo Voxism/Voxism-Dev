@@ -14,7 +14,7 @@
 #include <cstring>
 #include <deque>
 #include <memory>
-#include "IChunkModifier.h"
+#include "modifiers/IChunkModifier.h"
 
 class ChunkManager;
 
@@ -42,11 +42,31 @@ class Chunk
 
         // update OccupancyInts
         void updateChunk(float deltaTime, bool gridFill, bool floor, bool sphere);
+
+        void queueModifier(const std::shared_ptr<IChunkModifier> &modifier);
+        bool isOccupiedLocal(int x, int y, int z) const;
+        void setOccupiedLocal(int x, int y, int z, bool occupied);
+        void setMaterialLocal(int x, int y, int z, uint8_t materialID);
+
+        const ChunkPos &getChunkPos() const { return cp; }
+        int getLocalVoxelSizeX() const;
+        int getLocalVoxelSizeY() const;
+        int getLocalVoxelSizeZ() const;
+        bool isOccupancyQueued() const { return occupancyQueued_; }
+        bool isMeshQueued() const { return meshQueued_; }
+        void setOccupancyQueued(bool queued) { occupancyQueued_ = queued; }
+        void setMeshQueued(bool queued) { meshQueued_ = queued; }
     
     private:
         ChunkManager& cm;
+        ChunkPos cp;
         glm::vec3 worldcp;
         std::deque<std::shared_ptr<IChunkModifier>> modifierUpdateQueue;
+        bool occupancyQueued_ = false;
+        bool meshQueued_ = false;
+        bool materialDirty_ = false;
+        glm::ivec3 materialDirtyMin_ = glm::ivec3(0);
+        glm::ivec3 materialDirtyMax_ = glm::ivec3(0);
 
         // For each voxel in occupancyInts will fill an outlining grid.
         // Works with verious voxel and chunk sizes.
@@ -85,6 +105,10 @@ class Chunk
         void *vPtr; 
         void *ePtr; 
         void *nPtr;
+
+        bool isLocalInBounds(int x, int y, int z) const;
+        void markMaterialDirtyCell(int x, int y, int z);
+        void uploadDirtyMaterialRegion();
 };
 
 #endif

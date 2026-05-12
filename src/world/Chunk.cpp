@@ -3,6 +3,7 @@
 
 Chunk::Chunk(ChunkManager& cm, ChunkPos& cp):
     cm(cm),
+    cp(cp),
     // 0: Normal buffer management with GL_STREAM_DRAW (dynamically decide buffer sizes.)
     // 1: Utilize glMapBufferRange to then memcopy to memory. (predefine buffer sizes.)
     // 2: Buffer orphaning and then glBufferSubData. (predefine buffer sizes.)
@@ -17,6 +18,130 @@ Chunk::Chunk(ChunkManager& cm, ChunkPos& cp):
                         cp.z*cm.chunkSizeMeters);
     // sanity check for update method.
     assert(bufferUpdateMethod >= 0 && bufferUpdateMethod <= 2);
+}
+
+void Chunk::queueModifier(const std::shared_ptr<IChunkModifier> &modifier)
+{
+    modifierUpdateQueue.push_back(modifier);
+}
+
+int Chunk::getLocalVoxelSizeX() const
+{
+    return cm.occupancyXsize * 32;
+}
+
+int Chunk::getLocalVoxelSizeY() const
+{
+    return cm.occupancyYsize;
+}
+
+int Chunk::getLocalVoxelSizeZ() const
+{
+    return cm.occupancyZsize;
+}
+
+bool Chunk::isLocalInBounds(int x, int y, int z) const
+{
+    return x >= 0 && x < cm.occupancyXsize * 32 &&
+        y >= 0 && y < cm.occupancyYsize &&
+        z >= 0 && z < cm.occupancyZsize;
+}
+
+bool Chunk::isOccupiedLocal(int x, int y, int z) const
+{
+    if (!isLocalInBounds(x, y, z)) {
+        return false;
+    }
+
+    const int intX = x / 32;
+    const int bit = 31 - (x % 32);
+    const int occupancyIndex = z * cm.occupancyXsize * cm.occupancyYsize +
+        y * cm.occupancyXsize + intX;
+    return (occupancyInts[occupancyIndex] & (1u << bit)) != 0u;
+}
+
+void Chunk::setOccupiedLocal(int x, int y, int z, bool occupied)
+{
+    if (!isLocalInBounds(x, y, z)) {
+        return;
+    }
+
+    const int intX = x / 32;
+    const int bit = 31 - (x % 32);
+    const int occupancyIndex = z * cm.occupancyXsize * cm.occupancyYsize +
+        y * cm.occupancyXsize + intX;
+    const uint32_t mask = (1u << bit);
+
+    if (occupied) {
+        occupancyInts[occupancyIndex] |= mask;
+    } else {
+        occupancyInts[occupancyIndex] &= ~mask;
+    }
+}
+
+void Chunk::markMaterialDirtyCell(int x, int y, int z)
+{
+    if (!materialDirty_) {
+        materialDirty_ = true;
+        materialDirtyMin_ = glm::ivec3(x, y, z);
+        materialDirtyMax_ = glm::ivec3(x, y, z);
+        return;
+    }
+
+    materialDirtyMin_ = glm::min(materialDirtyMin_, glm::ivec3(x, y, z));
+    materialDirtyMax_ = glm::max(materialDirtyMax_, glm::ivec3(x, y, z));
+}
+
+void Chunk::setMaterialLocal(int x, int y, int z, uint8_t materialID)
+{
+    if (!isLocalInBounds(x, y, z) || cTexData.empty()) {
+        return;
+    }
+
+    const int texX = x / 2;
+    const int texY = y / 2;
+    const int texZ = z / 2;
+    const int textureSize = cm.chunkSizeInts * 16;
+    const int texIndex = texZ * textureSize * textureSize +
+        texY * textureSize + texX;
+    cTexData[texIndex] = materialID;
+    markMaterialDirtyCell(texX, texY, texZ);
+}
+
+void Chunk::uploadDirtyMaterialRegion()
+{
+    if (!materialDirty_ || cTexData.empty()) {
+        return;
+    }
+
+    const int textureSize = cm.chunkSizeInts * 16;
+    const int width = materialDirtyMax_.x - materialDirtyMin_.x + 1;
+    const int height = materialDirtyMax_.y - materialDirtyMin_.y + 1;
+    const int depth = materialDirtyMax_.z - materialDirtyMin_.z + 1;
+    std::vector<uint8_t> region(static_cast<size_t>(width * height * depth));
+
+    for (int dz = 0; dz < depth; dz++) {
+        for (int dy = 0; dy < height; dy++) {
+            for (int dx = 0; dx < width; dx++) {
+                const int srcX = materialDirtyMin_.x + dx;
+                const int srcY = materialDirtyMin_.y + dy;
+                const int srcZ = materialDirtyMin_.z + dz;
+                const int srcIndex = srcZ * textureSize * textureSize +
+                    srcY * textureSize + srcX;
+                const int dstIndex = dz * width * height + dy * width + dx;
+                region[dstIndex] = cTexData[srcIndex];
+            }
+        }
+    }
+
+    glBindTexture(GL_TEXTURE_3D, cTexID);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage3D(GL_TEXTURE_3D, 0,
+        materialDirtyMin_.x, materialDirtyMin_.y, materialDirtyMin_.z,
+        width, height, depth,
+        GL_RED_INTEGER, GL_UNSIGNED_BYTE, region.data());
+
+    materialDirty_ = false;
 }
 
 void Chunk::generate(){
@@ -45,8 +170,6 @@ void Chunk::generate(){
                     z*cm.voxSizeMeters+0.5*cm.voxSizeMeters // z position of the voxel.
                 );
                 fillFloor(&occupancyInt, &voxPosCenter, x, z);
-                fillChunkGrid(&occupancyInt, x, y, z);
-                fillMeterGrid(&occupancyInt, x, y, z);
 
                 if ((y & 1) == 0 && (z & 1) == 0)
                 {
@@ -169,28 +292,11 @@ void Chunk::bindMesh()
 }
 
 void Chunk::updateOccupancy(){
-    // float start = glfwGetTime();
-
-    int yxOffset = cm.occupancyXsize*cm.occupancyYsize;
-    // indexes into occupancyInts
-    for (int z=0; z<cm.occupancyZsize; z++)
-    {
-        for (int y=0; y<cm.occupancyYsize; y++)
-        {
-            for (int x=0; x<cm.occupancyXsize; x++)
-            {
-                int occupancyIndex = z * yxOffset + y * cm.occupancyXsize + x;
-                uint32_t& occupancyInt = occupancyInts[occupancyIndex];
-
-                // For each ChunkModifier in updateQueue call checkAndFill()
-                for (auto chunkMod : modifierUpdateQueue){
-                    chunkMod->checkAndFill(occupancyInt, x, y, z);
-                }
-            }
-        }
+    for (const auto &chunkMod : modifierUpdateQueue) {
+        chunkMod->applyToChunk(*this, cp);
     }
     modifierUpdateQueue.clear();
-    // std::cout << "Mesh Update Time: " << glfwGetTime()-start << std::endl;
+    uploadDirtyMaterialRegion();
 }
 
 void Chunk::updateMesh()

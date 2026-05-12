@@ -8,7 +8,7 @@
 #include <memory>
 #include <iomanip>
 #include <deque>
-#include "IChunkModifier.h"
+#include "modifiers/IChunkModifier.h"
 
 class ChunkManager {
     public:
@@ -22,13 +22,32 @@ class ChunkManager {
         int occupancyXsize, occupancyYsize, occupancyZsize; //used to iterate through chunks.
 
         // Function returns the chunk position for the passed position.
-        ChunkPos getChunkPos(glm::vec3& pos);
+        ChunkPos getChunkPos(const glm::vec3& pos) const;
+        ChunkPos getChunkPosForVoxel(const glm::ivec3 &voxel) const;
+        glm::ivec3 worldToVoxel(const glm::vec3 &pos) const;
+        glm::ivec3 worldToLocalVoxel(const glm::ivec3 &voxel) const;
+        bool isVoxelOccupied(const glm::ivec3 &voxel);
+
+        struct VoxelRaycastHit {
+            bool hit = false;
+            glm::ivec3 voxel = glm::ivec3(0);
+            glm::ivec3 adjacent = glm::ivec3(0);
+            glm::ivec3 normal = glm::ivec3(0);
+            glm::vec3 position = glm::vec3(0.0f);
+            float distance = 0.0f;
+        };
+
+        bool raycastVoxels(const glm::vec3 &origin,
+            const glm::vec3 &direction,
+            float maxDistance,
+            VoxelRaycastHit &outHit);
 
         std::shared_ptr<Chunk> generateChunk(ChunkPos& chunkPos);
+        std::shared_ptr<Chunk> getOrCreateChunk(const ChunkPos &chunkPos);
 
         // Modify chunk is given the modifier that is then parsed and attached to the chunks it effects.
         // Chunks are then marked and setup for occupancy updates.
-        void modifyChunks(IChunkModifier& chunkMod);
+        void modifyChunks(const std::shared_ptr<IChunkModifier> &chunkMod);
 
         // updates the occupancy array and any color information for some
         // chunks in the update array.
@@ -52,6 +71,9 @@ class ChunkManager {
 
         std::deque<std::shared_ptr<Chunk>> occupancyUpdateQueue;
         std::deque<std::shared_ptr<Chunk>> meshUpdateQueue;
+
+        void queueOccupancyUpdate(const std::shared_ptr<Chunk> &chunk);
+        void queueMeshUpdate(const std::shared_ptr<Chunk> &chunk);
 };
 
 #endif
