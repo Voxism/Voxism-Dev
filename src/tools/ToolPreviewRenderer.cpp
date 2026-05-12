@@ -2,15 +2,6 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
-namespace {
-std::string shaderPath(const std::string &resourceDir,
-    const std::string &category,
-    const std::string &filename)
-{
-    return resourceDir + "/shaders/" + category + "/" + filename;
-}
-}
-
 bool ToolPreviewRenderer::init(const std::string &resourceDirectory)
 {
     prog_ = std::make_shared<Program>();
