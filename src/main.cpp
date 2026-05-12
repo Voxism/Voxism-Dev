@@ -158,10 +158,6 @@ public:
 	~Application()
 	{
 		teardownPostProcess();
-		if (groundVao_)
-			glDeleteVertexArrays(1, &groundVao_);
-		if (groundVbo_)
-			glDeleteBuffers(1, &groundVbo_);
 		if (groundTexGl_)
 			glDeleteTextures(1, &groundTexGl_);
 		ImGui_ImplOpenGL3_Shutdown();
@@ -239,8 +235,6 @@ public:
 		groundTexGl_ = makeGroundCheckerTexture(256);
 
 		skybox_.init(resourceDirectory, "sky_equirect.jpg");
-
-		initGroundMesh();
 
 		world_.reset();
 
@@ -630,40 +624,6 @@ public:
 		return tex;
 	}
 
-	void initGroundMesh()
-	{
-		const float h = GameWorld::kGridHalf;
-		const float tu = 14.0f;
-		float verts[] = {
-			-h, 0.0f, -h, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
-			h, 0.0f, -h, 0.0f, 1.0f, 0.0f, tu, 0.0f,
-			h, 0.0f, h, 0.0f, 1.0f, 0.0f, tu, tu,
-			-h, 0.0f, -h, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
-			h, 0.0f, h, 0.0f, 1.0f, 0.0f, tu, tu,
-			-h, 0.0f, h, 0.0f, 1.0f, 0.0f, 0.0f, tu,
-		};
-
-		glGenVertexArrays(1, &groundVao_);
-		glBindVertexArray(groundVao_);
-		glGenBuffers(1, &groundVbo_);
-		glBindBuffer(GL_ARRAY_BUFFER, groundVbo_);
-		glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
-
-		GLint posLoc = texProg_->getAttribute("vertPos");
-		GLint norLoc = texProg_->getAttribute("vertNor");
-		GLint texLoc = texProg_->getAttribute("vertTex");
-		const GLsizei stride = static_cast<GLsizei>(8 * sizeof(float));
-		glEnableVertexAttribArray(posLoc);
-		glVertexAttribPointer(posLoc, 3, GL_FLOAT, GL_FALSE, stride, (const void *)0);
-		glEnableVertexAttribArray(norLoc);
-		glVertexAttribPointer(norLoc, 3, GL_FLOAT, GL_FALSE, stride, (const void *)(3 * sizeof(float)));
-		glEnableVertexAttribArray(texLoc);
-		glVertexAttribPointer(texLoc, 2, GL_FLOAT, GL_FALSE, stride, (const void *)(6 * sizeof(float)));
-
-		glBindBuffer(GL_ARRAY_BUFFER, 0);
-		glBindVertexArray(0);
-	}
-
 	void drawFullscreenQuad()
 	{
 		glDisable(GL_DEPTH_TEST);
@@ -909,35 +869,6 @@ public:
 		previewRenderer_.draw(preview, chunkManager->voxSizeMeters, P, V);
 
 		skybox_.draw(P, Vsky);
-
-		texProg_->bind();
-		glUniformMatrix4fv(texProg_->getUniform("P"), 1, GL_FALSE, value_ptr(P));
-		glUniformMatrix4fv(texProg_->getUniform("V"), 1, GL_FALSE, value_ptr(V));
-		glUniform3fv(texProg_->getUniform("lightPos"), 1, value_ptr(sunWorld_));
-		glUniform3fv(texProg_->getUniform("camPos"), 1, value_ptr(eye));
-		glUniform3fv(texProg_->getUniform("lightColor"), 1, value_ptr(lightColor));
-
-		// Ground
-		{
-			mat4 M(1.0f);
-			glUniformMatrix4fv(texProg_->getUniform("M"), 1, GL_FALSE, value_ptr(M));
-			glUniform3f(texProg_->getUniform("matAmbient"), 0.08f, 0.1f, 0.07f);
-			glUniform3f(texProg_->getUniform("matDiffuse"), 0.85f, 0.88f, 0.82f);
-			glUniform3f(texProg_->getUniform("matSpecular"), 0.12f, 0.14f, 0.1f);
-			glUniform1f(texProg_->getUniform("shininess"), 10.0f);
-			glUniform3f(texProg_->getUniform("tintColor"), 1.0f, 1.0f, 1.0f);
-			glUniform1f(texProg_->getUniform("emissiveStrength"), 0.0f);
-			glUniform3f(texProg_->getUniform("emissiveColor"), 0.0f, 0.0f, 0.0f);
-			glUniform1i(texProg_->getUniform("useEmissiveMap"), 0);
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, groundTexGl_);
-			glUniform1i(texProg_->getUniform("Texture0"), 0);
-			glBindVertexArray(groundVao_);
-			glDrawArrays(GL_TRIANGLES, 0, 6);
-			glBindVertexArray(0);
-		}
-
-		texProg_->unbind();
 	}
 
 	void chunkrender(double deltaTime) {
@@ -1150,9 +1081,6 @@ private:
 
 	shared_ptr<Texture> collectibleTex_;
 	GLuint groundTexGl_ = 0;
-
-	GLuint groundVao_ = 0;
-	GLuint groundVbo_ = 0;
 
 	vec3 sunWorld_;
 
