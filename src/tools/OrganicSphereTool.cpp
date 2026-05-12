@@ -1,7 +1,7 @@
 #include "OrganicSphereTool.h"
 
 #include "../world/Materials.h"
-#include "../world/StrokeSphereChunkModifier.h"
+#include "../world/modifiers/StrokeSphereChunkModifier.h"
 
 #include <imgui.h>
 

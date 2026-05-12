@@ -3,33 +3,11 @@
 #include <imgui.h>
 
 #include <cstdio>
+#include "../world/VoxelMath.h"
 
 namespace {
 constexpr int kDiscreteToolSizes[] = {2, 4, 8, 16, 32, 64};
 constexpr int kDiscreteToolSizeCount = sizeof(kDiscreteToolSizes) / sizeof(kDiscreteToolSizes[0]);
-}
-
-int floorDiv(int value, int divisor)
-{
-    int result = value / divisor;
-    const int remainder = value % divisor;
-    if (remainder != 0 && ((remainder < 0) != (divisor < 0))) {
-        --result;
-    }
-    return result;
-}
-
-int snapDownToGrid(int value, int gridSize)
-{
-    return floorDiv(value, gridSize) * gridSize;
-}
-
-glm::ivec3 snapVoxelToGrid(const glm::ivec3 &voxel, int gridSize)
-{
-    return glm::ivec3(
-        snapDownToGrid(voxel.x, gridSize),
-        snapDownToGrid(voxel.y, gridSize),
-        snapDownToGrid(voxel.z, gridSize));
 }
 
 void drawDiscreteSizeSelector(const char *label, int &value)

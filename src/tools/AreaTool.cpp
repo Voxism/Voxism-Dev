@@ -2,8 +2,9 @@
 
 #include "ToolGrid.h"
 
-#include "../world/BoxChunkModifier.h"
+#include "../world/modifiers/BoxChunkModifier.h"
 #include "../world/Materials.h"
+#include "../world/VoxelMath.h"
 
 #include <imgui.h>
 

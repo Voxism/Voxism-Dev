@@ -3,7 +3,8 @@
 #include "ToolGrid.h"
 
 #include "../world/Materials.h"
-#include "../world/SphereChunkModifier.h"
+#include "../world/modifiers/SphereChunkModifier.h"
+#include "../world/VoxelMath.h"
 
 #include <imgui.h>
 
