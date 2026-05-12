@@ -21,18 +21,27 @@ struct Material{
 
 class Materials {
     public:
+        enum PaletteMaterial : uint8_t {
+            Grass = 0,
+            Stone = 1,
+            Brick = 2,
+            Sand = 3
+        };
+        const static int paletteCount = 4;
+
         Materials();
 
         void init(GLuint bindingPoint);
 
-        // void addMaterial(Material);
-
         void bind();
+        size_t count() const { return materials.size(); }
+
+        static const char *paletteName(int index);
 
     private:
         std::vector<Material> materials;
-        GLuint matBuffID;
-        GLuint bindingPoint;
+        GLuint matBuffID = 0;
+        GLuint bindingPoint = 0;
 };
 
 #endif
