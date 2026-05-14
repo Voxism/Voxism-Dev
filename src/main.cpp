@@ -922,8 +922,11 @@ public:
 
 	void updateFixedStep(float dt)
 	{
-		vec3 wish = (static_cast<float>(keyW_) - static_cast<float>(keyS_)) * vec3(1,1,1) + (static_cast<float>(keyD_) - static_cast<float>(keyA_)) * vec3(1,1,1);
+		vec2 wish(
+			static_cast<float>(keyD_) - static_cast<float>(keyA_),
+			static_cast<float>(keyW_) - static_cast<float>(keyS_));
 		camera->UpdateCamera(dt);
+		animTime_ += dt;
 		const bool organicInUse =
 			toolManager_.supportsContinuousAction(ToolMode::Build) &&
 			(mouseLocked_ && (leftMouseDown_ || rightMouseDown_));
@@ -947,7 +950,7 @@ public:
 		toolView_.update(dt);
 
 		toolView_.setAnimTime(animTime_);
-		toolView_.setMoveBlend(animTime_);
+		toolView_.setMoveBlend(glm::clamp(glm::length(wish), 0.0f, 1.0f));
 	}
 
 	void drawScene3D(const mat4 &P, const mat4 &V)

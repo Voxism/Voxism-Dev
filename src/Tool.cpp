@@ -176,8 +176,8 @@ void ToolView::draw(int width,
 
 	glm::vec3 localOffset = offset_;
 	if (useBob_) {
-		float swayX = 0.02f * sin(animTime_ * 3.0f) * moveBlend_;
-		float swayY = 0.03f * sin(animTime_ * 8.0f) * moveBlend_;
+		float swayX = 0.02f * sin(animTime_ * 4.0f) * moveBlend_;
+		float swayY = 0.03f * sin(animTime_ * 10.0f) * moveBlend_;
 		localOffset += glm::vec3(swayX, swayY, 0.0f);
 	}
 
