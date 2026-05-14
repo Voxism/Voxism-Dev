@@ -38,3 +38,27 @@ void drawDiscreteSizeSelector(const char *label, int &value)
         ImGui::EndCombo();
     }
 }
+
+void cycleDiscreteSize(int &value, int direction)
+{
+    if (direction == 0) {
+        return;
+    }
+
+    int selectedIndex = 0;
+    for (int i = 0; i < kDiscreteToolSizeCount; ++i) {
+        if (kDiscreteToolSizes[i] == value) {
+            selectedIndex = i;
+            break;
+        }
+    }
+
+    selectedIndex += (direction > 0) ? 1 : -1;
+    if (selectedIndex < 0) {
+        selectedIndex = kDiscreteToolSizeCount - 1;
+    } else if (selectedIndex >= kDiscreteToolSizeCount) {
+        selectedIndex = 0;
+    }
+
+    value = kDiscreteToolSizes[selectedIndex];
+}

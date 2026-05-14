@@ -6,17 +6,15 @@
 #include "../world/VoxelMath.h"
 #include "../world/Materials.h"
 
-#include <imgui.h>
-
-ToolPreview CubeTool::computePreview(const ToolRaycastHit &hit) const
+ToolPreview CubeTool::computePreview(const ToolRaycastHit &hit, ToolMode mode) const
 {
     const int size = size_;
-    const glm::ivec3 anchor = (mode_ == ToolMode::Build) ? hit.adjacent : hit.voxel;
-    const glm::ivec3 extrude = (mode_ == ToolMode::Build) ? hit.normal : -hit.normal;
+    const glm::ivec3 anchor = (mode == ToolMode::Build) ? hit.adjacent : hit.voxel;
+    const glm::ivec3 extrude = (mode == ToolMode::Build) ? hit.normal : -hit.normal;
 
     ToolPreview preview;
     preview.valid = true;
-    preview.mode = mode_;
+    preview.mode = mode;
 
     glm::ivec3 minVoxel(0);
     glm::ivec3 maxVoxel(0);
@@ -40,46 +38,41 @@ ToolPreview CubeTool::computePreview(const ToolRaycastHit &hit) const
     return preview;
 }
 
-ToolPreview CubeTool::preview(const ToolRaycastHit &hit) const
+ToolPreview CubeTool::preview(const ToolRaycastHit &hit, ToolMode mode) const
 {
-    return computePreview(hit);
+    return computePreview(hit, mode);
 }
 
-ToolUseResult CubeTool::use(const ToolRaycastHit &hit, int chunkSizeVoxels) const
+ToolUseResult CubeTool::use(const ToolRaycastHit &hit, int chunkSizeVoxels, ToolMode mode) const
 {
     ToolUseResult result;
     result.consumed = true;
 
-    const ToolPreview previewBox = computePreview(hit);
+    const ToolPreview previewBox = computePreview(hit, mode);
     result.modifier = std::make_shared<BoxChunkModifier>(
         previewBox.minVoxel,
         previewBox.maxVoxel,
         chunkSizeVoxels,
-        mode_ == ToolMode::Build,
+        mode == ToolMode::Build,
         static_cast<uint8_t>(paletteIndex_));
     return result;
 }
 
-void CubeTool::drawImGui()
+void CubeTool::cycleSize(int direction)
 {
-    int modeIndex = static_cast<int>(mode_);
-    ImGui::RadioButton("Cube Build", &modeIndex, static_cast<int>(ToolMode::Build));
-    ImGui::SameLine();
-    ImGui::RadioButton("Cube Delete", &modeIndex, static_cast<int>(ToolMode::Delete));
-    mode_ = static_cast<ToolMode>(modeIndex);
+    cycleDiscreteSize(size_, direction);
+}
 
-    drawDiscreteSizeSelector("Cube Size", size_);
+void CubeTool::cycleMaterial(int direction)
+{
+    if (direction == 0) {
+        return;
+    }
 
-    if (ImGui::BeginCombo("Cube Palette", Materials::paletteName(paletteIndex_))) {
-        for (int i = 0; i < Materials::paletteCount; ++i) {
-            const bool selected = (i == paletteIndex_);
-            if (ImGui::Selectable(Materials::paletteName(i), selected)) {
-                paletteIndex_ = i;
-            }
-            if (selected) {
-                ImGui::SetItemDefaultFocus();
-            }
-        }
-        ImGui::EndCombo();
+    paletteIndex_ += (direction > 0) ? 1 : -1;
+    if (paletteIndex_ < 0) {
+        paletteIndex_ = Materials::paletteCount - 1;
+    } else if (paletteIndex_ >= Materials::paletteCount) {
+        paletteIndex_ = 0;
     }
 }

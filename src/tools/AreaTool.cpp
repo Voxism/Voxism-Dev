@@ -6,8 +6,6 @@
 #include "../world/Materials.h"
 #include "../world/VoxelMath.h"
 
-#include <imgui.h>
-
 namespace {
 glm::ivec3 snappedTargetVoxel(const ToolRaycastHit &hit, ToolMode mode, int gridSize)
 {
@@ -16,12 +14,12 @@ glm::ivec3 snappedTargetVoxel(const ToolRaycastHit &hit, ToolMode mode, int grid
 }
 }
 
-ToolUseResult AreaTool::use(const ToolRaycastHit &hit, int chunkSizeVoxels)
+ToolUseResult AreaTool::use(const ToolRaycastHit &hit, int chunkSizeVoxels, ToolMode mode)
 {
     ToolUseResult result;
     result.consumed = true;
 
-    const glm::ivec3 targetCell = snappedTargetVoxel(hit, mode_, gridSize_);
+    const glm::ivec3 targetCell = snappedTargetVoxel(hit, mode, gridSize_);
     if (!hasFirstPoint_) {
         hasFirstPoint_ = true;
         firstPointVoxel_ = targetCell;
@@ -34,19 +32,19 @@ ToolUseResult AreaTool::use(const ToolRaycastHit &hit, int chunkSizeVoxels)
         minVoxel,
         maxVoxel,
         chunkSizeVoxels,
-        mode_ == ToolMode::Build,
+        mode == ToolMode::Build,
         static_cast<uint8_t>(paletteIndex_));
     hasFirstPoint_ = false;
     return result;
 }
 
-ToolPreview AreaTool::computePreview(const ToolRaycastHit &hit) const
+ToolPreview AreaTool::computePreview(const ToolRaycastHit &hit, ToolMode mode) const
 {
     ToolPreview preview;
     preview.valid = true;
-    preview.mode = mode_;
+    preview.mode = mode;
 
-    const glm::ivec3 targetCell = snappedTargetVoxel(hit, mode_, gridSize_);
+    const glm::ivec3 targetCell = snappedTargetVoxel(hit, mode, gridSize_);
     if (!hasFirstPoint_) {
         preview.anchored = false;
         preview.anchorVoxel = targetCell;
@@ -62,45 +60,30 @@ ToolPreview AreaTool::computePreview(const ToolRaycastHit &hit) const
     return preview;
 }
 
-ToolPreview AreaTool::preview(const ToolRaycastHit &hit) const
+ToolPreview AreaTool::preview(const ToolRaycastHit &hit, ToolMode mode) const
 {
-    return computePreview(hit);
+    return computePreview(hit, mode);
 }
 
-void AreaTool::drawImGui()
+void AreaTool::cycleSize(int direction)
 {
-    const ToolMode previousMode = mode_;
     const int previousGridSize = gridSize_;
-
-    int modeIndex = static_cast<int>(mode_);
-    ImGui::RadioButton("Area Build", &modeIndex, static_cast<int>(ToolMode::Build));
-    ImGui::SameLine();
-    ImGui::RadioButton("Area Delete", &modeIndex, static_cast<int>(ToolMode::Delete));
-    mode_ = static_cast<ToolMode>(modeIndex);
-
-    drawDiscreteSizeSelector("Area Grid Size", gridSize_);
-
-    if (previousMode != mode_ || previousGridSize != gridSize_) {
+    cycleDiscreteSize(gridSize_, direction);
+    if (previousGridSize != gridSize_) {
         hasFirstPoint_ = false;
     }
+}
 
-    if (ImGui::BeginCombo("Area Palette", Materials::paletteName(paletteIndex_))) {
-        for (int i = 0; i < Materials::paletteCount; ++i) {
-            const bool selected = (i == paletteIndex_);
-            if (ImGui::Selectable(Materials::paletteName(i), selected)) {
-                paletteIndex_ = i;
-            }
-            if (selected) {
-                ImGui::SetItemDefaultFocus();
-            }
-        }
-        ImGui::EndCombo();
+void AreaTool::cycleMaterial(int direction)
+{
+    if (direction == 0) {
+        return;
     }
 
-    if (hasFirstPoint_) {
-        ImGui::Text("Area first point set");
-        if (ImGui::Button("Cancel Area Selection")) {
-            hasFirstPoint_ = false;
-        }
+    paletteIndex_ += (direction > 0) ? 1 : -1;
+    if (paletteIndex_ < 0) {
+        paletteIndex_ = Materials::paletteCount - 1;
+    } else if (paletteIndex_ >= Materials::paletteCount) {
+        paletteIndex_ = 0;
     }
 }

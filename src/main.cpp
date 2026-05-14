@@ -698,7 +698,9 @@ public:
 			mouseLocked_ = false;
 			firstMouse_ = true;
 			leftMouseDown_ = false;
-			toolManager_.endPrimaryAction();
+			rightMouseDown_ = false;
+			toolManager_.endAction(ToolMode::Build);
+			toolManager_.endAction(ToolMode::Delete);
 			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 			if (glfwRawMouseMotionSupported()) {
 				glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
@@ -726,13 +728,13 @@ public:
 		// 	player_.tryJump();
 
 		auto setKey = [&](int k, bool down) {
-			if (k == GLFW_KEY_W || k == GLFW_KEY_UP)
+			if (k == GLFW_KEY_W)
 				keyW_ = down;
-			else if (k == GLFW_KEY_S || k == GLFW_KEY_DOWN)
+			else if (k == GLFW_KEY_S)
 				keyS_ = down;
-			else if (k == GLFW_KEY_A || k == GLFW_KEY_LEFT)
+			else if (k == GLFW_KEY_A)
 				keyA_ = down;
-			else if (k == GLFW_KEY_D || k == GLFW_KEY_RIGHT)
+			else if (k == GLFW_KEY_D)
 				keyD_ = down;
 		};
 
@@ -763,13 +765,29 @@ public:
 			postToggles_.ssaoEnabled = !postToggles_.ssaoEnabled;
 			cout << "[PostFX] SSAO: " << (postToggles_.ssaoEnabled ? "ON" : "OFF") << endl;
 		}
+
+		if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+			if (key == GLFW_KEY_LEFT) {
+				toolManager_.cycleTool(-1);
+			} else if (key == GLFW_KEY_RIGHT) {
+				toolManager_.cycleTool(1);
+			} else if (key == GLFW_KEY_LEFT_BRACKET) {
+				toolManager_.cycleSize(-1);
+			} else if (key == GLFW_KEY_RIGHT_BRACKET) {
+				toolManager_.cycleSize(1);
+			} else if (key == GLFW_KEY_UP) {
+				toolManager_.cycleMaterial(1);
+			} else if (key == GLFW_KEY_DOWN) {
+				toolManager_.cycleMaterial(-1);
+			}
+		}
 	}
 
 	void mouseCallback(GLFWwindow *window, int button, int action, int mods) override
 	{
 		(void)mods;
 
-		if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+		if ((button == GLFW_MOUSE_BUTTON_LEFT || button == GLFW_MOUSE_BUTTON_RIGHT) && action == GLFW_PRESS) {
 			if (!mouseLocked_) {
 				mouseLocked_ = true;
 				firstMouse_ = true;
@@ -780,16 +798,26 @@ public:
 				return;
 			}
 
-			leftMouseDown_ = true;
+			const ToolMode mode = (button == GLFW_MOUSE_BUTTON_LEFT) ? ToolMode::Build : ToolMode::Delete;
+			if (button == GLFW_MOUSE_BUTTON_LEFT) {
+				leftMouseDown_ = true;
+			} else {
+				rightMouseDown_ = true;
+			}
 			glm::vec3 eye = camera->GetCameraPos();
 			glm::vec3 forward = glm::normalize(camera->GetForward());
-			if (toolManager_.beginPrimaryAction(*chunkManager, eye, forward)) {
+			if (toolManager_.beginAction(*chunkManager, eye, forward, mode)) {
 				toolView_.triggerUse();
 			}
 		}
-		if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
-			leftMouseDown_ = false;
-			toolManager_.endPrimaryAction();
+		if ((button == GLFW_MOUSE_BUTTON_LEFT || button == GLFW_MOUSE_BUTTON_RIGHT) && action == GLFW_RELEASE) {
+			const ToolMode mode = (button == GLFW_MOUSE_BUTTON_LEFT) ? ToolMode::Build : ToolMode::Delete;
+			if (button == GLFW_MOUSE_BUTTON_LEFT) {
+				leftMouseDown_ = false;
+			} else {
+				rightMouseDown_ = false;
+			}
+			toolManager_.endAction(mode);
 		}
 	}
 
@@ -833,10 +861,17 @@ public:
 		vec3 wish = (static_cast<float>(keyW_) - static_cast<float>(keyS_)) * vec3(1,1,1) + (static_cast<float>(keyD_) - static_cast<float>(keyA_)) * vec3(1,1,1);
 		camera->UpdateCamera(dt);
 
-		if (mouseLocked_ && leftMouseDown_ && toolManager_.supportsContinuousPrimaryAction()) {
+		if (mouseLocked_ && leftMouseDown_ && toolManager_.supportsContinuousAction(ToolMode::Build)) {
 			const glm::vec3 eye = camera->GetCameraPos();
 			const glm::vec3 forward = glm::normalize(camera->GetForward());
-			if (toolManager_.updatePrimaryAction(*chunkManager, eye, forward)) {
+			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Build)) {
+				toolView_.triggerUse();
+			}
+		}
+		if (mouseLocked_ && rightMouseDown_ && toolManager_.supportsContinuousAction(ToolMode::Delete)) {
+			const glm::vec3 eye = camera->GetCameraPos();
+			const glm::vec3 forward = glm::normalize(camera->GetForward());
+			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Delete)) {
 				toolView_.triggerUse();
 			}
 		}
@@ -866,7 +901,8 @@ public:
 		chunkManager->drawChunks(*chunkProg_);
 		chunkProg_->unbind();
 
-		ToolPreview preview = toolManager_.getPreview(*chunkManager, eye, glm::normalize(camera->GetForward()));
+		const ToolMode previewMode = rightMouseDown_ ? ToolMode::Delete : ToolMode::Build;
+		ToolPreview preview = toolManager_.getPreview(*chunkManager, eye, glm::normalize(camera->GetForward()), previewMode);
 		previewRenderer_.draw(preview, chunkManager->voxSizeMeters, P, V);
 
 		skybox_.draw(P, Vsky);
@@ -1036,11 +1072,17 @@ public:
 					camera->GetCameraPos().x,
 					camera->GetCameraPos().y,
 					camera->GetCameraPos().z);
+		ImGui::Text("Tool: %s", toolManager_.activeToolName());
+		ImGui::Text("Material: %s", toolManager_.activeMaterialName());
+		if (toolManager_.activeToolUsesMeterRadius()) {
+			ImGui::Text("Tool Size: %.2f m", toolManager_.activeToolRadiusMeters());
+		} else {
+			ImGui::Text("Tool Size: %d", toolManager_.activeToolSize());
+		}
 
 		ImGui::Checkbox("God Rays", &postToggles_.godRaysEnabled);
 		ImGui::Checkbox("Bloom", &postToggles_.bloomEnabled);
 		ImGui::Checkbox("SSAO", &postToggles_.ssaoEnabled);
-		toolManager_.drawImGui();
 
 		ImGui::End();
 		ImGui::Render();
@@ -1114,6 +1156,7 @@ private:
 	bool mouseLocked_ = false;
 	bool firstMouse_ = true;
 	bool leftMouseDown_ = false;
+	bool rightMouseDown_ = false;
 	double lastMouseX_ = 0.0, lastMouseY_ = 0.0;
 
 	double lastStatsPrint_ = 0.0;

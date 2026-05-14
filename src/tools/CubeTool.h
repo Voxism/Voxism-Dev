@@ -4,14 +4,16 @@
 
 class CubeTool {
 public:
-    ToolUseResult use(const ToolRaycastHit &hit, int chunkSizeVoxels) const;
-    ToolPreview preview(const ToolRaycastHit &hit) const;
-    void drawImGui();
+    ToolUseResult use(const ToolRaycastHit &hit, int chunkSizeVoxels, ToolMode mode) const;
+    ToolPreview preview(const ToolRaycastHit &hit, ToolMode mode) const;
+    void cycleSize(int direction);
+    void cycleMaterial(int direction);
+    int size() const { return size_; }
+    int materialIndex() const { return paletteIndex_; }
 
 private:
-    ToolPreview computePreview(const ToolRaycastHit &hit) const;
+    ToolPreview computePreview(const ToolRaycastHit &hit, ToolMode mode) const;
 
     int size_ = 2;
     int paletteIndex_ = 1;
-    ToolMode mode_ = ToolMode::Build;
 };

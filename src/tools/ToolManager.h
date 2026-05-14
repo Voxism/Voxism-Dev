@@ -9,18 +9,28 @@
 
 class ToolManager {
 public:
-    bool beginPrimaryAction(ChunkManager &chunkManager,
+    bool beginAction(ChunkManager &chunkManager,
         const glm::vec3 &origin,
-        const glm::vec3 &direction);
-    bool updatePrimaryAction(ChunkManager &chunkManager,
+        const glm::vec3 &direction,
+        ToolMode mode);
+    bool updateAction(ChunkManager &chunkManager,
         const glm::vec3 &origin,
-        const glm::vec3 &direction);
-    void endPrimaryAction();
-    bool supportsContinuousPrimaryAction() const;
+        const glm::vec3 &direction,
+        ToolMode mode);
+    void endAction(ToolMode mode);
+    bool supportsContinuousAction(ToolMode mode) const;
     ToolPreview getPreview(ChunkManager &chunkManager,
         const glm::vec3 &origin,
-        const glm::vec3 &direction) const;
-    void drawImGui();
+        const glm::vec3 &direction,
+        ToolMode mode) const;
+    void cycleTool(int direction);
+    void cycleSize(int direction);
+    void cycleMaterial(int direction);
+    const char *activeToolName() const;
+    const char *activeMaterialName() const;
+    bool activeToolUsesMeterRadius() const;
+    int activeToolSize() const;
+    float activeToolRadiusMeters() const;
 
 private:
     void clearInactiveToolState();

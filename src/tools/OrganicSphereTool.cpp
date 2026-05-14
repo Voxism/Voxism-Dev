@@ -3,8 +3,6 @@
 #include "../world/Materials.h"
 #include "../world/modifiers/StrokeSphereChunkModifier.h"
 
-#include <imgui.h>
-
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -34,11 +32,11 @@ glm::vec3 OrganicSphereTool::currentStrokeCenter(const glm::vec3 &origin, const 
     return origin + glm::normalize(direction) * strokeDistance_;
 }
 
-ToolPreview OrganicSphereTool::makePreview(const glm::vec3 &center, float voxelSizeMeters) const
+ToolPreview OrganicSphereTool::makePreview(const glm::vec3 &center, float voxelSizeMeters, ToolMode mode) const
 {
     ToolPreview preview;
     preview.valid = true;
-    preview.mode = mode_;
+    preview.mode = mode;
     preview.minVoxel = worldMinVoxel(center, radiusMeters_, voxelSizeMeters);
     preview.maxVoxel = worldMaxVoxel(center, radiusMeters_, voxelSizeMeters);
     return preview;
@@ -47,6 +45,7 @@ ToolPreview OrganicSphereTool::makePreview(const glm::vec3 &center, float voxelS
 ToolUseResult OrganicSphereTool::applyStrokeSegment(const glm::vec3 &center,
     int chunkSizeVoxels,
     float voxelSizeMeters,
+    ToolMode mode,
     bool updateLastCenter)
 {
     ToolUseResult result;
@@ -76,7 +75,7 @@ ToolUseResult OrganicSphereTool::applyStrokeSegment(const glm::vec3 &center,
         radiusMeters_,
         chunkSizeVoxels,
         voxelSizeMeters,
-        mode_ == ToolMode::Build,
+        mode == ToolMode::Build,
         static_cast<uint8_t>(paletteIndex_));
 
     if (updateLastCenter) {
@@ -90,19 +89,21 @@ ToolUseResult OrganicSphereTool::beginStroke(const glm::vec3 &origin,
     const glm::vec3 &direction,
     const ToolRaycastHit &hit,
     int chunkSizeVoxels,
-    float voxelSizeMeters)
+    float voxelSizeMeters,
+    ToolMode mode)
 {
     strokeActive_ = false;
     strokeDistance_ = hit.distance;
-    return applyStrokeSegment(currentStrokeCenter(origin, direction), chunkSizeVoxels, voxelSizeMeters, true);
+    return applyStrokeSegment(currentStrokeCenter(origin, direction), chunkSizeVoxels, voxelSizeMeters, mode, true);
 }
 
 ToolUseResult OrganicSphereTool::continueStroke(const glm::vec3 &origin,
     const glm::vec3 &direction,
     int chunkSizeVoxels,
-    float voxelSizeMeters)
+    float voxelSizeMeters,
+    ToolMode mode)
 {
-    return applyStrokeSegment(currentStrokeCenter(origin, direction), chunkSizeVoxels, voxelSizeMeters, true);
+    return applyStrokeSegment(currentStrokeCenter(origin, direction), chunkSizeVoxels, voxelSizeMeters, mode, true);
 }
 
 void OrganicSphereTool::endStroke()
@@ -114,37 +115,35 @@ void OrganicSphereTool::endStroke()
 ToolPreview OrganicSphereTool::preview(const glm::vec3 &origin,
     const glm::vec3 &direction,
     const ToolRaycastHit *hit,
-    float voxelSizeMeters) const
+    float voxelSizeMeters,
+    ToolMode mode) const
 {
     if (strokeActive_) {
-        return makePreview(currentStrokeCenter(origin, direction), voxelSizeMeters);
+        return makePreview(currentStrokeCenter(origin, direction), voxelSizeMeters, mode);
     }
     if (!hit) {
         return ToolPreview {};
     }
-    return makePreview(hit->position, voxelSizeMeters);
+    return makePreview(hit->position, voxelSizeMeters, mode);
 }
 
-void OrganicSphereTool::drawImGui()
+void OrganicSphereTool::cycleSize(int direction)
 {
-    int modeIndex = static_cast<int>(mode_);
-    ImGui::RadioButton("Organic Build", &modeIndex, static_cast<int>(ToolMode::Build));
-    ImGui::SameLine();
-    ImGui::RadioButton("Organic Delete", &modeIndex, static_cast<int>(ToolMode::Delete));
-    mode_ = static_cast<ToolMode>(modeIndex);
+    const float kStep = 0.25f;
+    radiusMeters_ += (direction > 0) ? kStep : -kStep;
+    radiusMeters_ = glm::clamp(radiusMeters_, 0.25f, 8.0f);
+}
 
-    ImGui::SliderFloat("Organic Radius", &radiusMeters_, 0.25f, 8.0f, "%.2f m");
+void OrganicSphereTool::cycleMaterial(int direction)
+{
+    if (direction == 0) {
+        return;
+    }
 
-    if (ImGui::BeginCombo("Organic Palette", Materials::paletteName(paletteIndex_))) {
-        for (int i = 0; i < Materials::paletteCount; ++i) {
-            const bool selected = (i == paletteIndex_);
-            if (ImGui::Selectable(Materials::paletteName(i), selected)) {
-                paletteIndex_ = i;
-            }
-            if (selected) {
-                ImGui::SetItemDefaultFocus();
-            }
-        }
-        ImGui::EndCombo();
+    paletteIndex_ += (direction > 0) ? 1 : -1;
+    if (paletteIndex_ < 0) {
+        paletteIndex_ = Materials::paletteCount - 1;
+    } else if (paletteIndex_ >= Materials::paletteCount) {
+        paletteIndex_ = 0;
     }
 }

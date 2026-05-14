@@ -6,8 +6,6 @@
 #include "../world/modifiers/SphereChunkModifier.h"
 #include "../world/VoxelMath.h"
 
-#include <imgui.h>
-
 namespace {
 glm::ivec3 snappedTargetVoxel(const ToolRaycastHit &hit, ToolMode mode, int gridSize)
 {
@@ -16,58 +14,53 @@ glm::ivec3 snappedTargetVoxel(const ToolRaycastHit &hit, ToolMode mode, int grid
 }
 }
 
-ToolPreview SphereTool::computePreview(const ToolRaycastHit &hit) const
+ToolPreview SphereTool::computePreview(const ToolRaycastHit &hit, ToolMode mode) const
 {
-    const glm::ivec3 cellMin = snappedTargetVoxel(hit, mode_, size_);
+    const glm::ivec3 cellMin = snappedTargetVoxel(hit, mode, size_);
 
     ToolPreview preview;
     preview.valid = true;
-    preview.mode = mode_;
+    preview.mode = mode;
     preview.minVoxel = cellMin;
     preview.maxVoxel = cellMin + glm::ivec3(size_ - 1);
     return preview;
 }
 
-ToolUseResult SphereTool::use(const ToolRaycastHit &hit, int chunkSizeVoxels) const
+ToolUseResult SphereTool::use(const ToolRaycastHit &hit, int chunkSizeVoxels, ToolMode mode) const
 {
     ToolUseResult result;
     result.consumed = true;
 
-    const glm::ivec3 cellMin = snappedTargetVoxel(hit, mode_, size_);
+    const glm::ivec3 cellMin = snappedTargetVoxel(hit, mode, size_);
     result.modifier = std::make_shared<SphereChunkModifier>(
         cellMin,
         size_,
         chunkSizeVoxels,
-        mode_ == ToolMode::Build,
+        mode == ToolMode::Build,
         static_cast<uint8_t>(paletteIndex_));
     return result;
 }
 
-ToolPreview SphereTool::preview(const ToolRaycastHit &hit) const
+ToolPreview SphereTool::preview(const ToolRaycastHit &hit, ToolMode mode) const
 {
-    return computePreview(hit);
+    return computePreview(hit, mode);
 }
 
-void SphereTool::drawImGui()
+void SphereTool::cycleSize(int direction)
 {
-    int modeIndex = static_cast<int>(mode_);
-    ImGui::RadioButton("Sphere Build", &modeIndex, static_cast<int>(ToolMode::Build));
-    ImGui::SameLine();
-    ImGui::RadioButton("Sphere Delete", &modeIndex, static_cast<int>(ToolMode::Delete));
-    mode_ = static_cast<ToolMode>(modeIndex);
+    cycleDiscreteSize(size_, direction);
+}
 
-    drawDiscreteSizeSelector("Sphere Size", size_);
+void SphereTool::cycleMaterial(int direction)
+{
+    if (direction == 0) {
+        return;
+    }
 
-    if (ImGui::BeginCombo("Sphere Palette", Materials::paletteName(paletteIndex_))) {
-        for (int i = 0; i < Materials::paletteCount; ++i) {
-            const bool selected = (i == paletteIndex_);
-            if (ImGui::Selectable(Materials::paletteName(i), selected)) {
-                paletteIndex_ = i;
-            }
-            if (selected) {
-                ImGui::SetItemDefaultFocus();
-            }
-        }
-        ImGui::EndCombo();
+    paletteIndex_ += (direction > 0) ? 1 : -1;
+    if (paletteIndex_ < 0) {
+        paletteIndex_ = Materials::paletteCount - 1;
+    } else if (paletteIndex_ >= Materials::paletteCount) {
+        paletteIndex_ = 0;
     }
 }

@@ -1,6 +1,6 @@
 #include "ToolManager.h"
 
-#include <imgui.h>
+#include "../world/Materials.h"
 
 namespace {
 bool raycastToolHit(ChunkManager &chunkManager,
@@ -23,9 +23,10 @@ bool raycastToolHit(ChunkManager &chunkManager,
 }
 }
 
-bool ToolManager::beginPrimaryAction(ChunkManager &chunkManager,
+bool ToolManager::beginAction(ChunkManager &chunkManager,
     const glm::vec3 &origin,
-    const glm::vec3 &direction)
+    const glm::vec3 &direction,
+    ToolMode mode)
 {
     ToolRaycastHit toolHit;
     if (!raycastToolHit(chunkManager, origin, direction, maxUseDistance_, toolHit)) {
@@ -35,13 +36,13 @@ bool ToolManager::beginPrimaryAction(ChunkManager &chunkManager,
     ToolUseResult result;
     const int chunkSizeVoxels = chunkManager.chunkSizeInts * 32;
     if (activeTool_ == ToolKind::Cube) {
-        result = cubeTool_.use(toolHit, chunkSizeVoxels);
+        result = cubeTool_.use(toolHit, chunkSizeVoxels, mode);
     } else if (activeTool_ == ToolKind::Area) {
-        result = areaTool_.use(toolHit, chunkSizeVoxels);
+        result = areaTool_.use(toolHit, chunkSizeVoxels, mode);
     } else if (activeTool_ == ToolKind::Sphere) {
-        result = sphereTool_.use(toolHit, chunkSizeVoxels);
+        result = sphereTool_.use(toolHit, chunkSizeVoxels, mode);
     } else {
-        result = organicSphereTool_.beginStroke(origin, direction, toolHit, chunkSizeVoxels, chunkManager.voxSizeMeters);
+        result = organicSphereTool_.beginStroke(origin, direction, toolHit, chunkSizeVoxels, chunkManager.voxSizeMeters, mode);
     }
 
     if (result.modifier) {
@@ -50,39 +51,43 @@ bool ToolManager::beginPrimaryAction(ChunkManager &chunkManager,
     return result.consumed;
 }
 
-bool ToolManager::updatePrimaryAction(ChunkManager &chunkManager,
+bool ToolManager::updateAction(ChunkManager &chunkManager,
     const glm::vec3 &origin,
-    const glm::vec3 &direction)
+    const glm::vec3 &direction,
+    ToolMode mode)
 {
-    if (!supportsContinuousPrimaryAction()) {
+    if (!supportsContinuousAction(mode)) {
         return false;
     }
 
     const int chunkSizeVoxels = chunkManager.chunkSizeInts * 32;
-    ToolUseResult result = organicSphereTool_.continueStroke(origin, direction, chunkSizeVoxels, chunkManager.voxSizeMeters);
+    ToolUseResult result = organicSphereTool_.continueStroke(origin, direction, chunkSizeVoxels, chunkManager.voxSizeMeters, mode);
     if (result.modifier) {
         chunkManager.modifyChunks(result.modifier);
     }
     return result.consumed;
 }
 
-void ToolManager::endPrimaryAction()
+void ToolManager::endAction(ToolMode mode)
 {
+    (void)mode;
     if (activeTool_ == ToolKind::OrganicSphere) {
         organicSphereTool_.endStroke();
     }
 }
 
-bool ToolManager::supportsContinuousPrimaryAction() const
+bool ToolManager::supportsContinuousAction(ToolMode mode) const
 {
+    (void)mode;
     return activeTool_ == ToolKind::OrganicSphere;
 }
 
 ToolPreview ToolManager::getPreview(ChunkManager &chunkManager,
     const glm::vec3 &origin,
-    const glm::vec3 &direction) const
+    const glm::vec3 &direction,
+    ToolMode mode) const
 {
-    if (activeTool_ == ToolKind::OrganicSphere && supportsContinuousPrimaryAction()) {
+    if (activeTool_ == ToolKind::OrganicSphere && supportsContinuousAction(mode)) {
         ChunkManager::VoxelRaycastHit hit;
         if (chunkManager.raycastVoxels(origin, direction, maxUseDistance_, hit)) {
             ToolRaycastHit toolHit;
@@ -91,9 +96,9 @@ ToolPreview ToolManager::getPreview(ChunkManager &chunkManager,
             toolHit.normal = hit.normal;
             toolHit.position = hit.position;
             toolHit.distance = hit.distance;
-            return organicSphereTool_.preview(origin, direction, &toolHit, chunkManager.voxSizeMeters);
+            return organicSphereTool_.preview(origin, direction, &toolHit, chunkManager.voxSizeMeters, mode);
         }
-        return organicSphereTool_.preview(origin, direction, nullptr, chunkManager.voxSizeMeters);
+        return organicSphereTool_.preview(origin, direction, nullptr, chunkManager.voxSizeMeters, mode);
     }
 
     ChunkManager::VoxelRaycastHit hit;
@@ -109,43 +114,61 @@ ToolPreview ToolManager::getPreview(ChunkManager &chunkManager,
     toolHit.distance = hit.distance;
 
     if (activeTool_ == ToolKind::Cube) {
-        return cubeTool_.preview(toolHit);
+        return cubeTool_.preview(toolHit, mode);
     }
     if (activeTool_ == ToolKind::Area) {
-        return areaTool_.preview(toolHit);
+        return areaTool_.preview(toolHit, mode);
     }
     if (activeTool_ == ToolKind::Sphere) {
-        return sphereTool_.preview(toolHit);
+        return sphereTool_.preview(toolHit, mode);
     }
-    return organicSphereTool_.preview(origin, direction, &toolHit, chunkManager.voxSizeMeters);
+    return organicSphereTool_.preview(origin, direction, &toolHit, chunkManager.voxSizeMeters, mode);
 }
 
-void ToolManager::drawImGui()
+void ToolManager::cycleTool(int direction)
 {
-    const ToolKind previousTool = activeTool_;
-    int toolIndex = static_cast<int>(activeTool_);
-    ImGui::RadioButton("Cube Tool", &toolIndex, static_cast<int>(ToolKind::Cube));
-    ImGui::SameLine();
-    ImGui::RadioButton("Area Tool", &toolIndex, static_cast<int>(ToolKind::Area));
-    ImGui::SameLine();
-    ImGui::RadioButton("Sphere Tool", &toolIndex, static_cast<int>(ToolKind::Sphere));
-    ImGui::SameLine();
-    ImGui::RadioButton("Organic Tool", &toolIndex, static_cast<int>(ToolKind::OrganicSphere));
-    activeTool_ = static_cast<ToolKind>(toolIndex);
-    if (activeTool_ != previousTool) {
-        clearInactiveToolState();
+    if (direction == 0) {
+        return;
     }
 
-    ImGui::SliderFloat("Tool Range", &maxUseDistance_, 2.0f, 20.0f, "%.1f m");
+    const int toolCount = static_cast<int>(ToolKind::OrganicSphere) + 1;
+    int toolIndex = static_cast<int>(activeTool_) + ((direction > 0) ? 1 : -1);
+    if (toolIndex < 0) {
+        toolIndex = toolCount - 1;
+    } else if (toolIndex >= toolCount) {
+        toolIndex = 0;
+    }
 
+    const ToolKind nextTool = static_cast<ToolKind>(toolIndex);
+    if (nextTool != activeTool_) {
+        activeTool_ = nextTool;
+        clearInactiveToolState();
+    }
+}
+
+void ToolManager::cycleSize(int direction)
+{
     if (activeTool_ == ToolKind::Cube) {
-        cubeTool_.drawImGui();
+        cubeTool_.cycleSize(direction);
     } else if (activeTool_ == ToolKind::Area) {
-        areaTool_.drawImGui();
+        areaTool_.cycleSize(direction);
     } else if (activeTool_ == ToolKind::Sphere) {
-        sphereTool_.drawImGui();
+        sphereTool_.cycleSize(direction);
     } else {
-        organicSphereTool_.drawImGui();
+        organicSphereTool_.cycleSize(direction);
+    }
+}
+
+void ToolManager::cycleMaterial(int direction)
+{
+    if (activeTool_ == ToolKind::Cube) {
+        cubeTool_.cycleMaterial(direction);
+    } else if (activeTool_ == ToolKind::Area) {
+        areaTool_.cycleMaterial(direction);
+    } else if (activeTool_ == ToolKind::Sphere) {
+        sphereTool_.cycleMaterial(direction);
+    } else {
+        organicSphereTool_.cycleMaterial(direction);
     }
 }
 
@@ -157,4 +180,59 @@ void ToolManager::clearInactiveToolState()
     if (activeTool_ != ToolKind::OrganicSphere) {
         organicSphereTool_.endStroke();
     }
+}
+
+const char *ToolManager::activeToolName() const
+{
+    if (activeTool_ == ToolKind::Cube) {
+        return "Cube";
+    }
+    if (activeTool_ == ToolKind::Area) {
+        return "Area";
+    }
+    if (activeTool_ == ToolKind::Sphere) {
+        return "Sphere";
+    }
+    return "Organic";
+}
+
+const char *ToolManager::activeMaterialName() const
+{
+    if (activeTool_ == ToolKind::Cube) {
+        return Materials::paletteName(cubeTool_.materialIndex());
+    }
+    if (activeTool_ == ToolKind::Area) {
+        return Materials::paletteName(areaTool_.materialIndex());
+    }
+    if (activeTool_ == ToolKind::Sphere) {
+        return Materials::paletteName(sphereTool_.materialIndex());
+    }
+    return Materials::paletteName(organicSphereTool_.materialIndex());
+}
+
+bool ToolManager::activeToolUsesMeterRadius() const
+{
+    return activeTool_ == ToolKind::OrganicSphere;
+}
+
+int ToolManager::activeToolSize() const
+{
+    if (activeTool_ == ToolKind::Cube) {
+        return cubeTool_.size();
+    }
+    if (activeTool_ == ToolKind::Area) {
+        return areaTool_.size();
+    }
+    if (activeTool_ == ToolKind::Sphere) {
+        return sphereTool_.size();
+    }
+    return 0;
+}
+
+float ToolManager::activeToolRadiusMeters() const
+{
+    if (activeTool_ == ToolKind::OrganicSphere) {
+        return organicSphereTool_.radiusMeters();
+    }
+    return 0.0f;
 }
