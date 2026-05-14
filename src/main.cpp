@@ -149,7 +149,7 @@ struct PostProcessToggle {
     float bloomStrength  = 1.6f;
     float ssaoRadius     = 0.75f;
     float ssaoBias       = 0.025f;
-    float ssaoIntensity  = 2.0f;
+    float ssaoIntensity  = 1.5f;
 };
 
 class Application : public EventCallbacks {
