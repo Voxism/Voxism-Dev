@@ -33,6 +33,7 @@
 #include "Crosshair.h"
 #include "tools/ToolManager.h"
 #include "tools/ToolPreviewRenderer.h"
+#include "audio/SoundtrackPlayer.h"
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_glfw.h>
@@ -271,6 +272,15 @@ public:
 		const char *glsl_version = "#version 330";
 		ImGui_ImplGlfw_InitForOpenGL(windowManager->getHandle(), true);
 		ImGui_ImplOpenGL3_Init(glsl_version);
+
+		// --- Soundtrack: start looping background music. Non-fatal on failure. ---
+		if (soundtrack_.init()) {
+			const string trackPath =
+				resourceDirectory + "/soundtrack/Porter Robinson - Lifelike (Official Audio).mp3";
+			if (!soundtrack_.playLoop(trackPath)) {
+				cerr << "Soundtrack: failed to start '" << trackPath << "'" << endl;
+			}
+		}
 	}
 
 	void initPostProcessShaders(const string &resourceDirectory)
@@ -1152,6 +1162,8 @@ private:
 	double lastMouseX_ = 0.0, lastMouseY_ = 0.0;
 
 	double lastStatsPrint_ = 0.0;
+
+	SoundtrackPlayer soundtrack_;
 };
 
 int main(int argc, char *argv[])
