@@ -248,9 +248,9 @@ public:
 		lastStatsPrint_ = 0.0;
 
 		toolView_.init(resourceDirectory, texProg_, groundTexGl_);
-		toolView_.setOffset(vec3(0.22f, -0.18f, 0.55f));
-		toolView_.setRotationDeg(vec3(-15.0f, 180.0f, -12.0f));
-		toolView_.setScale(vec3(0.05f, 0.05f, 0.85f));
+		toolView_.setOffset(vec3(1.0f, -2.5f, 1.5f));
+		toolView_.setRotationDeg(vec3(4.0f, 180.0f, 0.0f));
+		toolView_.setScale(vec3(0.05f, 0.05f, 0.05f));
 		toolView_.setFov(55.0f);
 		if (!previewRenderer_.init(resourceDirectory))
 			cerr << "previewRenderer init failed" << endl;

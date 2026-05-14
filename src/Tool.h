@@ -47,6 +47,7 @@ public:
 private:
 	static void computeNormals(tinyobj::mesh_t &mesh);
 	static void ensureTexcoordsXZ(tinyobj::shape_t &sh);
+	static std::vector<float> loadVertexColors(const std::string &path, size_t expectedVertexCount);
 	static std::shared_ptr<Shape> loadMesh(const std::string &resourceDirectory,
 	                                       const char *primaryName,
 	                                       const char *fallbackName);
@@ -61,7 +62,7 @@ private:
 	bool useBob_ = true;
 
 	float fovDeg_ = 55.0f;
-	glm::vec3 scale_ = glm::vec3(0.08f, 0.08f, 0.9f);
+	glm::vec3 scale_ = glm::vec3(0.1f);
 	float animTime_ = 0.0f;
 	float moveBlend_ = 0.0f;
 
@@ -69,6 +70,6 @@ private:
 	float useAnimTime_ = 0.0f;
 	float useAnimDuration_ = 0.18f;
 
-	glm::vec3 offset_ = glm::vec3(0.38f, -0.30f, -0.85f);
-	glm::vec3 rotationDeg_ = glm::vec3(0.0f, 180.0f, 0.0f);
+	glm::vec3 offset_ = glm::vec3(-100.0f, 0.0f, 0.0f);
+	glm::vec3 rotationDeg_ = glm::vec3(0.0f, 0.0f, 0.0f);
 };
