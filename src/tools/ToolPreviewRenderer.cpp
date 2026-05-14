@@ -56,10 +56,6 @@ void ToolPreviewRenderer::draw(const ToolPreview &preview,
         p000, p001, p100, p101, p110, p111, p010, p011
     };
 
-    const glm::vec3 color = (preview.mode == ToolMode::Build) ?
-        (preview.anchored ? glm::vec3(0.2f, 0.95f, 0.45f) : glm::vec3(0.85f, 0.95f, 0.25f)) :
-        glm::vec3(0.95f, 0.3f, 0.25f);
-
     glBindVertexArray(vao_);
     glBindBuffer(GL_ARRAY_BUFFER, vbo_);
     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(lines), lines);
@@ -67,11 +63,12 @@ void ToolPreviewRenderer::draw(const ToolPreview &preview,
     prog_->bind();
     glUniformMatrix4fv(prog_->getUniform("P"), 1, GL_FALSE, glm::value_ptr(P));
     glUniformMatrix4fv(prog_->getUniform("V"), 1, GL_FALSE, glm::value_ptr(V));
-    glUniform3fv(prog_->getUniform("previewColor"), 1, glm::value_ptr(color));
+    glUniform3fv(prog_->getUniform("previewColor"), 1, glm::value_ptr(glm::vec3(0.0f, 0.0f, 0.0f)));
 
     glDisable(GL_CULL_FACE);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glLineWidth(2.0f);
     glDrawArrays(GL_LINES, 0, 24);
     glDisable(GL_BLEND);
     glEnable(GL_CULL_FACE);
