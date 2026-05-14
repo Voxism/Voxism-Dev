@@ -388,12 +388,11 @@ bool FirstPersonCamera::ResolveAxisMove(int axis, float delta)
         candidate[axis] += step;
 
         if (CollidesAt(candidate)) {
-            if ((axis == 0 || axis == 2) && TryStepUpAxisMove(axis, step)) {
-                remaining -= step;
-                continue;
-            }
-
-            player_pos[axis] += ResolveCollidingStep(axis, step);
+            // if ((axis == 0 || axis == 2) && TryStepUpAxisMove(axis, step)) {
+            //     remaining -= step;
+            //     continue;
+            // }
+            // player_pos[axis] += ResolveCollidingStep(axis, step);
             collided = true;
             break;
         }
