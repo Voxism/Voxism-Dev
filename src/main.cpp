@@ -894,8 +894,7 @@ public:
 		chunkManager->drawChunks(*chunkProg_);
 		chunkProg_->unbind();
 
-		const ToolMode previewMode = rightMouseDown_ ? ToolMode::Delete : ToolMode::Build;
-		ToolPreview preview = toolManager_.getPreview(*chunkManager, eye, glm::normalize(camera->GetForward()), previewMode);
+		ToolPreview preview = toolManager_.getPreview(*chunkManager, eye, glm::normalize(camera->GetForward()), ToolMode::Build);
 		previewRenderer_.draw(preview, chunkManager->voxSizeMeters, P, V);
 
 		skybox_.draw(P, Vsky);
