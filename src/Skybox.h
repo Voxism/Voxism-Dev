@@ -8,13 +8,17 @@
 
 class Program;
 
-/** Fullscreen-direction cube + equirectangular 2D texture (same mapping as CSC471 skybox). */
+/** Cubemap skybox loaded from 6 face images (px, nx, py, ny, pz, nz). */
 class Skybox {
 public:
 	Skybox();
 	~Skybox();
 
-	bool init(const std::string &resourceDir, const std::string &equirectFile);
+	/**
+	 * Load 6 cubemap faces from <resourceDir>/<faceDir>/{px,nx,py,ny,pz,nz}.<ext>
+	 * Pass faceDir e.g. "skybox", and ext e.g. "png".
+	 */
+	bool init(const std::string &resourceDir, const std::string &faceDir, const std::string &ext);
 
 	void draw(const glm::mat4 &P, const glm::mat4 &viewRotationOnly);
 

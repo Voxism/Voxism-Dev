@@ -12,6 +12,7 @@ Shape::Shape() :
 	posBufID(0),
 	norBufID(0),
 	texBufID(0), 
+	colBufID(0),
    vaoID(0)
 {
 	min = glm::vec3(0);
@@ -29,6 +30,11 @@ void Shape::createShape(tinyobj::shape_t & shape)
 		norBuf = shape.mesh.normals;
 		texBuf = shape.mesh.texcoords;
 		eleBuf = shape.mesh.indices;
+}
+
+void Shape::setColors(std::vector<float> colors)
+{
+	colBuf = std::move(colors);
 }
 
 void Shape::measure() {
@@ -86,6 +92,14 @@ void Shape::init()
 		glBindBuffer(GL_ARRAY_BUFFER, texBufID);
 		glBufferData(GL_ARRAY_BUFFER, texBuf.size()*sizeof(float), &texBuf[0], GL_STATIC_DRAW);
 	}
+
+	if(colBuf.empty()) {
+		colBufID = 0;
+	} else {
+		glGenBuffers(1, &colBufID);
+		glBindBuffer(GL_ARRAY_BUFFER, colBufID);
+		glBufferData(GL_ARRAY_BUFFER, colBuf.size()*sizeof(float), &colBuf[0], GL_STATIC_DRAW);
+	}
 	
 	// Send the element array to the GPU
 	glGenBuffers(1, &eleBufID);
@@ -101,8 +115,8 @@ void Shape::init()
 
 void Shape::draw(const shared_ptr<Program> prog) const
 {
-	int h_pos, h_nor, h_tex;
-	h_pos = h_nor = h_tex = -1;
+	int h_pos, h_nor, h_tex, h_col;
+	h_pos = h_nor = h_tex = h_col = -1;
 
    glBindVertexArray(vaoID);
 	// Bind position buffer
@@ -128,6 +142,15 @@ void Shape::draw(const shared_ptr<Program> prog) const
 			glVertexAttribPointer(h_tex, 2, GL_FLOAT, GL_FALSE, 0, (const void *)0);
 		}
 	}
+
+	if (colBufID != 0) {
+		h_col = prog->getAttribute("vertCol");
+		if(h_col != -1) {
+			GLSL::enableVertexAttribArray(h_col);
+			glBindBuffer(GL_ARRAY_BUFFER, colBufID);
+			glVertexAttribPointer(h_col, 3, GL_FLOAT, GL_FALSE, 0, (const void *)0);
+		}
+	}
 	
 	// Bind element buffer
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, eleBufID);
@@ -138,6 +161,9 @@ void Shape::draw(const shared_ptr<Program> prog) const
 	// Disable and unbind
 	if(h_tex != -1) {
 		GLSL::disableVertexAttribArray(h_tex);
+	}
+	if(h_col != -1) {
+		GLSL::disableVertexAttribArray(h_col);
 	}
 	if(h_nor != -1) {
 		GLSL::disableVertexAttribArray(h_nor);

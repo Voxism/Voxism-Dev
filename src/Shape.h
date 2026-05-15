@@ -16,6 +16,7 @@ public:
 	Shape();
 	virtual ~Shape();
 	void createShape(tinyobj::shape_t & shape);
+	void setColors(std::vector<float> colors);
 	void init();
 	void measure();
 	void draw(const std::shared_ptr<Program> prog) const;
@@ -27,10 +28,12 @@ private:
 	std::vector<float> posBuf;
 	std::vector<float> norBuf;
 	std::vector<float> texBuf;
+	std::vector<float> colBuf;
 	unsigned eleBufID;
 	unsigned posBufID;
 	unsigned norBufID;
 	unsigned texBufID;
+	unsigned colBufID;
    unsigned vaoID;
 };
 

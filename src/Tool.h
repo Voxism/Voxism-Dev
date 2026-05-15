@@ -16,8 +16,7 @@ public:
 	~ToolView() = default;
 
 	bool init(const std::string &resourceDirectory,
-          const std::shared_ptr<Program> &litProgram,
-          GLuint textureID);
+          const std::shared_ptr<Program> &litProgram);
 
     void draw(int width,
           int height,
@@ -40,6 +39,7 @@ public:
 	void setAnimTime(float t) { animTime_ = t; }
 	void setMoveBlend(float b) { moveBlend_ = b; }
 	void setUseBob(bool useBob) { useBob_ = useBob; }
+	void setContinuousUseActive(bool active) { continuousUseActive_ = active; }
 
 	void triggerUse();
 	void update(float dt);
@@ -54,21 +54,22 @@ private:
 private:
 	std::shared_ptr<Program> prog_;
 	std::shared_ptr<Shape> mesh_;
-
-	GLuint textureID_ = 0;
+	std::shared_ptr<Texture> texture_;
 
 	bool visible_ = true;
 	bool useBob_ = true;
 
 	float fovDeg_ = 55.0f;
-	glm::vec3 scale_ = glm::vec3(0.08f, 0.08f, 0.9f);
+	glm::vec3 scale_ = glm::vec3(0.1f);
 	float animTime_ = 0.0f;
 	float moveBlend_ = 0.0f;
 
 	bool useAnimating_ = false;
 	float useAnimTime_ = 0.0f;
 	float useAnimDuration_ = 0.18f;
+	bool continuousUseActive_ = false;
+	float continuousUseTime_ = 0.0f;
 
-	glm::vec3 offset_ = glm::vec3(0.38f, -0.30f, -0.85f);
-	glm::vec3 rotationDeg_ = glm::vec3(0.0f, 180.0f, 0.0f);
+	glm::vec3 offset_ = glm::vec3(-100.0f, 0.0f, 0.0f);
+	glm::vec3 rotationDeg_ = glm::vec3(0.0f, 0.0f, 0.0f);
 };

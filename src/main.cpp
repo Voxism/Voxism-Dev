@@ -19,16 +19,21 @@
 #include "GameWorld.h"
 #include "GltfMesh.h"
 #include "Skybox.h"
-#include "FirstPersonCamera.h"
+#include "camera/FirstPersonCamera.h"
+#include "camera/FreeCamera.h"
 #include "GLSL.h"
 #include "MatrixStack.h"
 #include "Program.h"
 #include "Shape.h"
 #include "Texture.h"
 #include "WindowManager.h"
-#include "world/Chunk.h"
+#include "world/ChunkManager.h"
+#include "world/Materials.h"
 #include "Tool.h"
 #include "Crosshair.h"
+#include "tools/ToolManager.h"
+#include "tools/ToolPreviewRenderer.h"
+#include "audio/SoundtrackPlayer.h"
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_glfw.h>
@@ -136,6 +141,64 @@ static std::string shaderPath(const std::string& resourceDir,
     return resourceDir + "/shaders/" + category + "/" + filename;
 }
 
+// ---------------------------------------------------------------------------
+// CPU-only helper: project the world-space sun position into screen UV and
+// classify visibility. Pure CPU code (no GL types, no GL calls) so it can be
+// unit-tested without an OpenGL context.
+//
+// Returns:
+//   sunScreen      — UV in [0, 1] when sunVisible; sentinel (0.5, 0.55) when not
+//   sunVisible     — true iff sunClip.w > 0.001f AND sunVisibleFade > 0
+//   sunVisibleFade — 0..1 multiplier applied to godrayStrength at composite time
+//
+// kMargin defines the smooth-fade window (in UV space) around [0, 1] so the
+// godray contribution does not pop on/off as the sun crosses the frustum edge.
+// ---------------------------------------------------------------------------
+namespace {
+
+struct SunProjection {
+    glm::vec2 sunScreen;      // UV in [0,1]; valid only when sunVisible
+    bool      sunVisible;     // sunClip.w > 0.001f AND sunVisibleFade > 0
+    float     sunVisibleFade; // 0..1; multiplies godrayStrength
+};
+
+SunProjection projectSunToScreen(const glm::mat4& P, const glm::mat4& V,
+                                 const glm::vec3& sunWorld,
+                                 float kMargin = 0.15f)
+{
+    SunProjection out;
+    out.sunScreen      = glm::vec2(0.5f, 0.55f); // sentinel matches pre-fix default
+    out.sunVisible     = false;
+    out.sunVisibleFade = 0.0f;
+
+    const glm::vec4 sunClip = P * V * glm::vec4(sunWorld, 1.0f);
+    if (sunClip.w > 0.001f) {
+        const glm::vec2 uv((sunClip.x / sunClip.w) * 0.5f + 0.5f,
+                           (sunClip.y / sunClip.w) * 0.5f + 0.5f);
+
+        // Per-axis margin-clamp fade. Equals 1.0 strictly inside [0,1], decays
+        // linearly to 0 across the kMargin window past each boundary.
+        const float kSafeMargin = (kMargin > 0.0f) ? kMargin : 1e-6f;
+        const float fx = glm::clamp(
+            1.0f - std::max(0.0f, std::max(-uv.x, uv.x - 1.0f)) / kSafeMargin,
+            0.0f, 1.0f);
+        const float fy = glm::clamp(
+            1.0f - std::max(0.0f, std::max(-uv.y, uv.y - 1.0f)) / kSafeMargin,
+            0.0f, 1.0f);
+
+        const float fade = fx * fy;
+        if (fade > 0.0f) {
+            out.sunScreen      = uv;
+            out.sunVisibleFade = fade;
+            out.sunVisible     = true;
+        }
+    }
+
+    return out;
+}
+
+} // namespace
+
 struct PostProcessToggle {
     bool godRaysEnabled  = false;
     bool bloomEnabled    = false;
@@ -154,10 +217,6 @@ public:
 	~Application()
 	{
 		teardownPostProcess();
-		if (groundVao_)
-			glDeleteVertexArrays(1, &groundVao_);
-		if (groundVbo_)
-			glDeleteBuffers(1, &groundVbo_);
 		if (groundTexGl_)
 			glDeleteTextures(1, &groundTexGl_);
 		ImGui_ImplOpenGL3_Shutdown();
@@ -176,7 +235,12 @@ public:
 
 		glEnable(GL_CULL_FACE);
 
-		sunWorld_ = vec3(6.0f, 18.0f, 10.0f);
+		sunWorld_ = vec3(12.0f, 30.0f, 20.0f);
+
+
+		// Materials initialization
+		GLuint materialsBindingPoint = 0;
+		materials->init(materialsBindingPoint);
 
 		// ChunkProg definition
 		chunkProg_ = make_shared<Program>();
@@ -190,9 +254,16 @@ public:
 		chunkProg_->addUniform("P");
 		chunkProg_->addUniform("V");
 		chunkProg_->addUniform("M");
+		chunkProg_->addUniform("chunkWorldPos");
+		chunkProg_->addUniform("chunkSizeMeters");
+		chunkProg_->addUniform("voxelSizeMeters");
+		chunkProg_->addUniformBuffObj("materials", materialsBindingPoint);
+		chunkProg_->addUniform("matIDTex");
+		chunkProg_->addUniform("lightPos");
+		chunkProg_->addUniform("camPos");
+		chunkProg_->addUniform("lightColor");
 		chunkProg_->addAttribute("vertPos");
-		chunkProg_->addAttribute("vertColor");
-		chunk->bindMesh();
+		chunkProg_->addAttribute("normalID");
 
 		// Lit texture pass (world-space Blinn-Phong, 471-style texture sampling)
 		texProg_ = make_shared<Program>();
@@ -222,18 +293,10 @@ public:
 
 		groundTexGl_ = makeGroundCheckerTexture(256);
 
-		skybox_.init(resourceDirectory, "sky_equirect.jpg");
-
-		initGroundMesh();
+		skybox_.init(resourceDirectory, "skybox", "png");
 
 		world_.reset();
-
-		glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 3 * 4096, nullptr, GL_DYNAMIC_DRAW);
-		glEnableVertexAttribArray(0);
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
-		glBindVertexArray(0);
-		glBindBuffer(GL_ARRAY_BUFFER, 0);
-
+		fpvCamera.SetChunkManager(chunkManager.get());
 
 		initPostProcessShaders(resourceDirectory);
 
@@ -243,11 +306,13 @@ public:
 
 		lastStatsPrint_ = 0.0;
 
-		toolView_.init(resourceDirectory, texProg_, groundTexGl_);
-		toolView_.setOffset(vec3(0.22f, -0.18f, 0.55f));
-		toolView_.setRotationDeg(vec3(-15.0f, 180.0f, -12.0f));
-		toolView_.setScale(vec3(0.05f, 0.05f, 0.85f));
+		toolView_.init(resourceDirectory, texProg_);
+		toolView_.setOffset(vec3(1.0f, -2.5f, 1.5f));
+		toolView_.setRotationDeg(vec3(4.0f, 180.0f, 0.0f));
+		toolView_.setScale(vec3(0.05f, 0.05f, 0.05f));
 		toolView_.setFov(55.0f);
+		if (!previewRenderer_.init(resourceDirectory))
+			cerr << "previewRenderer init failed" << endl;
 
 		crosshair_.init(resourceDirectory);
 		crosshair_.setSize(8.0f);
@@ -265,6 +330,42 @@ public:
 		const char *glsl_version = "#version 330";
 		ImGui_ImplGlfw_InitForOpenGL(windowManager->getHandle(), true);
 		ImGui_ImplOpenGL3_Init(glsl_version);
+
+		// --- Soundtrack: start looping background music. Non-fatal on failure. ---
+		if (soundtrack_.init()) {
+			soundtrack_.setVolume(musicVolume_);
+			const string trackPath =
+				resourceDirectory + "/soundtrack/Porter Robinson - Lifelike (Official Audio).mp3";
+			if (!soundtrack_.playLoop(trackPath)) {
+				cerr << "Soundtrack: failed to start '" << trackPath << "'" << endl;
+			}
+
+			// --- SFX: pre-decode the 4 break/place stone clips into voice pools. ---
+			for (int i = 1; i <= 4; ++i) {
+				const string idB = "break" + std::to_string(i);
+				const string idP = "place" + std::to_string(i);
+				const string pathB = resourceDirectory + "/sfx/break/stone" + std::to_string(i) + ".ogg";
+				const string pathP = resourceDirectory + "/sfx/place/stone" + std::to_string(i) + ".ogg";
+				if (soundtrack_.loadSfx(idB, pathB)) breakSfxIds_.push_back(idB);
+				if (soundtrack_.loadSfx(idP, pathP)) placeSfxIds_.push_back(idP);
+			}
+		}
+	}
+
+	/** Play a random break sfx (from sfx/break/stone1..4.ogg). Non-fatal. */
+	void playBreakSfx()
+	{
+		if (breakSfxIds_.empty()) return;
+		std::uniform_int_distribution<size_t> dist(0, breakSfxIds_.size() - 1);
+		soundtrack_.playSfx(breakSfxIds_[dist(sfxRng_)]);
+	}
+
+	/** Play a random place sfx (from sfx/place/stone1..4.ogg). Non-fatal. */
+	void playPlaceSfx()
+	{
+		if (placeSfxIds_.empty()) return;
+		std::uniform_int_distribution<size_t> dist(0, placeSfxIds_.size() - 1);
+		soundtrack_.playSfx(placeSfxIds_[dist(sfxRng_)]);
 	}
 
 	void initPostProcessShaders(const string &resourceDirectory)
@@ -278,14 +379,6 @@ public:
 		godrayProg_->addUniform("sceneTex");
 		godrayProg_->addUniform("sunPos");
 		godrayProg_->addUniform("time");
-
-		sunMaskProg_ = make_shared<Program>();
-		sunMaskProg_->setVerbose(true);
-		sunMaskProg_->setShaderNames(shaderPath(resourceDirectory, "postprocess", "screen_vert.glsl"),
-		                             shaderPath(resourceDirectory, "postprocess", "sunmask_frag.glsl"));
-		if (!sunMaskProg_->init())
-			cerr << "sunMaskProg failed" << endl;
-		sunMaskProg_->addUniform("sunPos");
 
 		bloomBrightProg_ = make_shared<Program>();
 		bloomBrightProg_->setVerbose(true);
@@ -388,14 +481,6 @@ public:
 			glDeleteTextures(1, &godrayTex_);
 			godrayTex_ = 0;
 		}
-		if (godraySrcFBO_) {
-			glDeleteFramebuffers(1, &godraySrcFBO_);
-			godraySrcFBO_ = 0;
-		}
-		if (godraySrcTex_) {
-			glDeleteTextures(1, &godraySrcTex_);
-			godraySrcTex_ = 0;
-		}
 		for (int i = 0; i < 2; i++) {
 			if (pingpongFBO_[i]) {
 				glDeleteFramebuffers(1, &pingpongFBO_[i]);
@@ -488,18 +573,6 @@ public:
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, godrayTex_, 0);
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-		glGenFramebuffers(1, &godraySrcFBO_);
-		glBindFramebuffer(GL_FRAMEBUFFER, godraySrcFBO_);
-		glGenTextures(1, &godraySrcTex_);
-		glBindTexture(GL_TEXTURE_2D, godraySrcTex_);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, nullptr);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, godraySrcTex_, 0);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 		int hw = std::max(1, w / 2);
@@ -612,40 +685,6 @@ public:
 		return tex;
 	}
 
-	void initGroundMesh()
-	{
-		const float h = GameWorld::kGridHalf;
-		const float tu = 14.0f;
-		float verts[] = {
-			-h, 0.0f, -h, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
-			h, 0.0f, -h, 0.0f, 1.0f, 0.0f, tu, 0.0f,
-			h, 0.0f, h, 0.0f, 1.0f, 0.0f, tu, tu,
-			-h, 0.0f, -h, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
-			h, 0.0f, h, 0.0f, 1.0f, 0.0f, tu, tu,
-			-h, 0.0f, h, 0.0f, 1.0f, 0.0f, 0.0f, tu,
-		};
-
-		glGenVertexArrays(1, &groundVao_);
-		glBindVertexArray(groundVao_);
-		glGenBuffers(1, &groundVbo_);
-		glBindBuffer(GL_ARRAY_BUFFER, groundVbo_);
-		glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
-
-		GLint posLoc = texProg_->getAttribute("vertPos");
-		GLint norLoc = texProg_->getAttribute("vertNor");
-		GLint texLoc = texProg_->getAttribute("vertTex");
-		const GLsizei stride = static_cast<GLsizei>(8 * sizeof(float));
-		glEnableVertexAttribArray(posLoc);
-		glVertexAttribPointer(posLoc, 3, GL_FLOAT, GL_FALSE, stride, (const void *)0);
-		glEnableVertexAttribArray(norLoc);
-		glVertexAttribPointer(norLoc, 3, GL_FLOAT, GL_FALSE, stride, (const void *)(3 * sizeof(float)));
-		glEnableVertexAttribArray(texLoc);
-		glVertexAttribPointer(texLoc, 2, GL_FLOAT, GL_FALSE, stride, (const void *)(6 * sizeof(float)));
-
-		glBindBuffer(GL_ARRAY_BUFFER, 0);
-		glBindVertexArray(0);
-	}
-
 	void drawFullscreenQuad()
 	{
 		glDisable(GL_DEPTH_TEST);
@@ -718,25 +757,44 @@ public:
 		if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
 			mouseLocked_ = false;
 			firstMouse_ = true;
+			leftMouseDown_ = false;
+			rightMouseDown_ = false;
+			toolManager_.endAction(ToolMode::Build);
+			toolManager_.endAction(ToolMode::Delete);
 			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 			if (glfwRawMouseMotionSupported()) {
 				glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
 			}
 		}
 
-		thirdPersonCam_.ProcessKeypress(key, action);
+		if (key == GLFW_KEY_X && action == GLFW_PRESS) {
+			if (camera == &fpvCamera) {
+				freeCamera.SetState(
+					fpvCamera.GetCameraPos(),
+					fpvCamera.GetYaw(),
+					fpvCamera.GetPitch(),
+					fpvCamera.GetFOV()
+				);
+
+				camera = &freeCamera;
+			} else {
+				camera = &fpvCamera;
+			}
+		}
+
+		camera->ProcessKeypress(key, action);
 
 		// if (key == GLFW_KEY_SPACE && action == GLFW_PRESS)
 		// 	player_.tryJump();
 
 		auto setKey = [&](int k, bool down) {
-			if (k == GLFW_KEY_W || k == GLFW_KEY_UP)
+			if (k == GLFW_KEY_W)
 				keyW_ = down;
-			else if (k == GLFW_KEY_S || k == GLFW_KEY_DOWN)
+			else if (k == GLFW_KEY_S)
 				keyS_ = down;
-			else if (k == GLFW_KEY_A || k == GLFW_KEY_LEFT)
+			else if (k == GLFW_KEY_A)
 				keyA_ = down;
-			else if (k == GLFW_KEY_D || k == GLFW_KEY_RIGHT)
+			else if (k == GLFW_KEY_D)
 				keyD_ = down;
 		};
 
@@ -767,13 +825,29 @@ public:
 			postToggles_.ssaoEnabled = !postToggles_.ssaoEnabled;
 			cout << "[PostFX] SSAO: " << (postToggles_.ssaoEnabled ? "ON" : "OFF") << endl;
 		}
+
+		if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+			if (key == GLFW_KEY_LEFT) {
+				toolManager_.cycleTool(-1);
+			} else if (key == GLFW_KEY_RIGHT) {
+				toolManager_.cycleTool(1);
+			} else if (key == GLFW_KEY_LEFT_BRACKET) {
+				toolManager_.cycleSize(-1);
+			} else if (key == GLFW_KEY_RIGHT_BRACKET) {
+				toolManager_.cycleSize(1);
+			} else if (key == GLFW_KEY_UP) {
+				toolManager_.cycleMaterial(1);
+			} else if (key == GLFW_KEY_DOWN) {
+				toolManager_.cycleMaterial(-1);
+			}
+		}
 	}
 
 	void mouseCallback(GLFWwindow *window, int button, int action, int mods) override
 	{
 		(void)mods;
 
-		if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+		if ((button == GLFW_MOUSE_BUTTON_LEFT || button == GLFW_MOUSE_BUTTON_RIGHT) && action == GLFW_PRESS) {
 			if (!mouseLocked_) {
 				mouseLocked_ = true;
 				firstMouse_ = true;
@@ -784,12 +858,30 @@ public:
 				return;
 			}
 
-			glm::vec3 eye = thirdPersonCam_.GetCameraPos();
-			glm::vec3 forward = glm::normalize(thirdPersonCam_.GetForward());
-			glm::vec3 placePos = eye + forward * 1.0f;
-			chunk->addVoxelAtWorldPos(placePos);
-			chunk->updateMesh();
-			toolView_.triggerUse();
+			const ToolMode mode = (button == GLFW_MOUSE_BUTTON_LEFT) ? ToolMode::Build : ToolMode::Delete;
+			if (button == GLFW_MOUSE_BUTTON_LEFT) {
+				leftMouseDown_ = true;
+			} else {
+				rightMouseDown_ = true;
+			}
+			glm::vec3 eye = camera->GetCameraPos();
+			glm::vec3 forward = glm::normalize(camera->GetForward());
+			if (toolManager_.beginAction(*chunkManager, eye, forward, mode)) {
+				if (!toolManager_.supportsContinuousAction(mode)) {
+					toolView_.triggerUse();
+				}
+				if (mode == ToolMode::Build)  playPlaceSfx();
+				else                          playBreakSfx();
+			}
+		}
+		if ((button == GLFW_MOUSE_BUTTON_LEFT || button == GLFW_MOUSE_BUTTON_RIGHT) && action == GLFW_RELEASE) {
+			const ToolMode mode = (button == GLFW_MOUSE_BUTTON_LEFT) ? ToolMode::Build : ToolMode::Delete;
+			if (button == GLFW_MOUSE_BUTTON_LEFT) {
+				leftMouseDown_ = false;
+			} else {
+				rightMouseDown_ = false;
+			}
+			toolManager_.endAction(mode);
 		}
 	}
 
@@ -818,31 +910,55 @@ public:
 		double dy = lastMouseY_ - ypos;
 		lastMouseX_ = xpos;
 		lastMouseY_ = ypos;
-		thirdPersonCam_.ProcessMouseMovement(dx, dy);
+		camera->ProcessMouseMovement(dx, dy);
 	}
 
 	void scrollCallback(GLFWwindow *window, double xoffset, double yoffset) override
 	{
 		(void)window;
 		(void)xoffset;
-		thirdPersonCam_.ProcessScroll(yoffset);
+		camera->ProcessScroll(yoffset);
 	}
 
 	void updateFixedStep(float dt)
 	{
-		vec3 wish = (static_cast<float>(keyW_) - static_cast<float>(keyS_)) * vec3(1,1,1) + (static_cast<float>(keyD_) - static_cast<float>(keyA_)) * vec3(1,1,1);
-		thirdPersonCam_.UpdateCamera(dt);
+		vec2 wish(
+			static_cast<float>(keyD_) - static_cast<float>(keyA_),
+			static_cast<float>(keyW_) - static_cast<float>(keyS_));
+		camera->UpdateCamera(dt);
+		animTime_ += dt;
+		const bool organicInUse =
+			toolManager_.supportsContinuousAction(ToolMode::Build) &&
+			(mouseLocked_ && (leftMouseDown_ || rightMouseDown_));
+		toolView_.setContinuousUseActive(organicInUse);
+
+		if (mouseLocked_ && leftMouseDown_ && toolManager_.supportsContinuousAction(ToolMode::Build)) {
+			const glm::vec3 eye = camera->GetCameraPos();
+			const glm::vec3 forward = glm::normalize(camera->GetForward());
+			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Build)) {
+				playPlaceSfx();
+			}
+		}
+		if (mouseLocked_ && rightMouseDown_ && toolManager_.supportsContinuousAction(ToolMode::Delete)) {
+			const glm::vec3 eye = camera->GetCameraPos();
+			const glm::vec3 forward = glm::normalize(camera->GetForward());
+			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Delete)) {
+				playBreakSfx();
+			}
+		}
 		
 		toolView_.update(dt);
 
 		toolView_.setAnimTime(animTime_);
-		toolView_.setMoveBlend(animTime_);
+		toolView_.setMoveBlend(glm::clamp(glm::length(wish), 0.0f, 1.0f));
 	}
 
 	void drawScene3D(const mat4 &P, const mat4 &V)
 	{
-		vec3 eye = thirdPersonCam_.GetCameraPos();
+		vec3 eye = camera->GetCameraPos();
 		mat4 Vsky = glm::mat4(glm::mat3(V));
+
+		vec3 lightColor(1.0f, 0.98f, 0.92f);
 
 		// --- Chunk Drawing ---
 		chunkProg_->bind();
@@ -850,46 +966,20 @@ public:
 		glUniformMatrix4fv(chunkProg_->getUniform("P"), 1, GL_FALSE, value_ptr(P));
 		glUniformMatrix4fv(chunkProg_->getUniform("V"), 1, GL_FALSE, value_ptr(V));
 		glUniformMatrix4fv(chunkProg_->getUniform("M"), 1, GL_FALSE, value_ptr(M));
-		chunk->drawMesh(*chunkProg_);
+		glUniform3fv(chunkProg_->getUniform("lightPos"), 1, value_ptr(sunWorld_));
+		glUniform3fv(chunkProg_->getUniform("camPos"), 1, value_ptr(eye));
+		glUniform3fv(chunkProg_->getUniform("lightColor"), 1, value_ptr(lightColor));
+		chunkManager->drawChunks(*chunkProg_);
 		chunkProg_->unbind();
 
+		ToolPreview preview = toolManager_.getPreview(*chunkManager, eye, glm::normalize(camera->GetForward()), ToolMode::Build);
+		previewRenderer_.draw(preview, chunkManager->voxSizeMeters, P, V);
+
 		skybox_.draw(P, Vsky);
-
-		vec3 lightColor(1.0f, 0.98f, 0.92f);
-
-		texProg_->bind();
-		glUniformMatrix4fv(texProg_->getUniform("P"), 1, GL_FALSE, value_ptr(P));
-		glUniformMatrix4fv(texProg_->getUniform("V"), 1, GL_FALSE, value_ptr(V));
-		glUniform3fv(texProg_->getUniform("lightPos"), 1, value_ptr(sunWorld_));
-		glUniform3fv(texProg_->getUniform("camPos"), 1, value_ptr(eye));
-		glUniform3fv(texProg_->getUniform("lightColor"), 1, value_ptr(lightColor));
-
-		// Ground
-		{
-			mat4 M(1.0f);
-			glUniformMatrix4fv(texProg_->getUniform("M"), 1, GL_FALSE, value_ptr(M));
-			glUniform3f(texProg_->getUniform("matAmbient"), 0.08f, 0.1f, 0.07f);
-			glUniform3f(texProg_->getUniform("matDiffuse"), 0.85f, 0.88f, 0.82f);
-			glUniform3f(texProg_->getUniform("matSpecular"), 0.12f, 0.14f, 0.1f);
-			glUniform1f(texProg_->getUniform("shininess"), 10.0f);
-			glUniform3f(texProg_->getUniform("tintColor"), 1.0f, 1.0f, 1.0f);
-			glUniform1f(texProg_->getUniform("emissiveStrength"), 0.0f);
-			glUniform3f(texProg_->getUniform("emissiveColor"), 0.0f, 0.0f, 0.0f);
-			glUniform1i(texProg_->getUniform("useEmissiveMap"), 0);
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, groundTexGl_);
-			glUniform1i(texProg_->getUniform("Texture0"), 0);
-			glBindVertexArray(groundVao_);
-			glDrawArrays(GL_TRIANGLES, 0, 6);
-			glBindVertexArray(0);
-		}
-
-		texProg_->unbind();
 	}
 
 	void chunkrender(double deltaTime) {
-		chunk->updateChunk(deltaTime, false, true, true);
-		chunk->updateMesh();
+		chunkManager->updateChunks();
 	}
 
 	void render()
@@ -902,9 +992,9 @@ public:
 		float aspect = width / (float)height;
 		MatrixStack Pstack;
 		Pstack.pushMatrix();
-		Pstack.perspective(glm::radians(thirdPersonCam_.GetFOV()), aspect, 0.1f, 200.0f);
+		Pstack.perspective(glm::radians(camera->GetFOV()), aspect, 0.1f, 2000.0f);
 		mat4 P = Pstack.topMatrix();
-		mat4 V = thirdPersonCam_.GetViewMatrix();
+		mat4 V = camera->GetViewMatrix();
 		Pstack.popMatrix();
 
 		// --- Scene HDR framebuffer (brighter clear helps god-ray mask) ---
@@ -919,11 +1009,10 @@ public:
 			glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-		vec4 sunClip = P * V * vec4(sunWorld_, 1.0f);
-		vec2 sunScreen(0.5f, 0.55f);
-		if (std::abs(sunClip.w) > 0.001f) {
-			sunScreen = vec2((sunClip.x / sunClip.w) * 0.5f + 0.5f, (sunClip.y / sunClip.w) * 0.5f + 0.5f);
-		}
+		const SunProjection sunProj = projectSunToScreen(P, V, sunWorld_);
+		const vec2  sunScreen      = sunProj.sunScreen;
+		const bool  sunVisible     = sunProj.sunVisible;
+		const float sunVisibleFade = sunProj.sunVisibleFade;
 
 		// --- SSAO pass (conditional) ---
 		if (postToggles_.ssaoEnabled) {
@@ -931,24 +1020,14 @@ public:
 		}
 
 		// --- God rays (conditional) ---
-		if (postToggles_.godRaysEnabled) {
-			glBindFramebuffer(GL_FRAMEBUFFER, godraySrcFBO_);
-			glViewport(0, 0, postW_, postH_);
-			glClearColor(0.18f, 0.22f, 0.34f, 1.0f);
-			glClear(GL_COLOR_BUFFER_BIT);
-			sunMaskProg_->bind();
-			glUniform2f(sunMaskProg_->getUniform("sunPos"), sunScreen.x, sunScreen.y);
-			drawFullscreenQuad();
-			sunMaskProg_->unbind();
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-			// --- God rays (from sun mask, not full scene) ---
+		if (postToggles_.godRaysEnabled && sunVisible) {
+			// Source the radial blur from the real scene HDR buffer (matches CSC471 ref).
 			glBindFramebuffer(GL_FRAMEBUFFER, godrayFBO_);
 			glViewport(0, 0, postW_, postH_);
 			glClear(GL_COLOR_BUFFER_BIT);
 			godrayProg_->bind();
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, godraySrcTex_);
+			glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
 			glUniform1i(godrayProg_->getUniform("sceneTex"), 0);
 			glUniform2f(godrayProg_->getUniform("sunPos"), sunScreen.x, sunScreen.y);
 			glUniform1f(godrayProg_->getUniform("time"), (float)glfwGetTime());
@@ -994,7 +1073,9 @@ public:
 		}
 
 		// --- Composite to default framebuffer ---
-		float godrayStrength = postToggles_.godRaysEnabled ? postToggles_.godrayStrength : 0.0f;
+		float godrayStrength = (postToggles_.godRaysEnabled && sunVisible)
+		                       ? postToggles_.godrayStrength * sunVisibleFade
+		                       : 0.0f;
 		float bloomStrength  = postToggles_.bloomEnabled   ? postToggles_.bloomStrength  : 0.0f;
 		glViewport(0, 0, width, height);
 		glClearColor(0.06f, 0.07f, 0.09f, 1.0f);
@@ -1020,15 +1101,15 @@ public:
 		compositeProg_->unbind();
 
 		// tool
-		glm::vec3 eye = thirdPersonCam_.GetCameraPos();
+		glm::vec3 eye = camera->GetCameraPos();
 		glm::vec3 lightColor(1.0f, 0.98f, 0.92f);
 
 		toolView_.draw(width, height,
 					V,
 					eye,
-					thirdPersonCam_.GetForward(),
-					thirdPersonCam_.GetRight(),
-					thirdPersonCam_.GetUp(),
+					camera->GetForward(),
+					camera->GetRight(),
+					camera->GetUp(),
 					sunWorld_,
 					lightColor);
 		
@@ -1049,13 +1130,24 @@ public:
 
 		ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
 		ImGui::Text("Camera Pos: %.2f %.2f %.2f",
-					thirdPersonCam_.GetCameraPos().x,
-					thirdPersonCam_.GetCameraPos().y,
-					thirdPersonCam_.GetCameraPos().z);
+					camera->GetCameraPos().x,
+					camera->GetCameraPos().y,
+					camera->GetCameraPos().z);
+		ImGui::Text("Tool: %s", toolManager_.activeToolName());
+		ImGui::Text("Material: %s", toolManager_.activeMaterialName());
+		if (toolManager_.activeToolUsesMeterRadius()) {
+			ImGui::Text("Tool Size: %.2f m", toolManager_.activeToolRadiusMeters());
+		} else {
+			ImGui::Text("Tool Size: %d", toolManager_.activeToolSize());
+		}
 
 		ImGui::Checkbox("God Rays", &postToggles_.godRaysEnabled);
 		ImGui::Checkbox("Bloom", &postToggles_.bloomEnabled);
 		ImGui::Checkbox("SSAO", &postToggles_.ssaoEnabled);
+
+		if (ImGui::SliderFloat("Music", &musicVolume_, 0.0f, 1.0f, "%.2f")) {
+			soundtrack_.setVolume(musicVolume_);
+		}
 
 		ImGui::End();
 		ImGui::Render();
@@ -1071,25 +1163,31 @@ private:
 	float moveBlendDisplay_ = 0.0f;
 	float characterScale_ = 1.0f;
 
-	FirstPersonCamera thirdPersonCam_;
+	FirstPersonCamera fpvCamera;
+	FreeCamera freeCamera;
+	Camera* camera = &fpvCamera;
 	ToolView toolView_;
+	ToolManager toolManager_;
+	ToolPreviewRenderer previewRenderer_;
 	Crosshair crosshair_;
 	Skybox skybox_;
 	// GltfMesh characterMesh_;
 
 	shared_ptr<Program> texProg_;
 	shared_ptr<Program> godrayProg_, bloomBrightProg_, blurProg_, compositeProg_;
-	shared_ptr<Program> sunMaskProg_;
 	shared_ptr<Program> chunkProg_;
 	shared_ptr<Program> ssaoProg_;
 	shared_ptr<Program> ssaoBlurProg_;
-	shared_ptr<Chunk> chunk = make_shared<Chunk>();
+	shared_ptr<Materials> materials = make_shared<Materials>();
+	shared_ptr<ChunkManager> chunkManager = make_shared<ChunkManager>(
+	16,// voxPerMeter 
+	16,// chunkSizeMeters
+	32,// renderDistance (in meters)
+	16// renderHeight (int meters)
+	);
 
 	shared_ptr<Texture> collectibleTex_;
 	GLuint groundTexGl_ = 0;
-
-	GLuint groundVao_ = 0;
-	GLuint groundVbo_ = 0;
 
 	vec3 sunWorld_;
 
@@ -1098,7 +1196,6 @@ private:
 	GLuint sceneDepthTex_ = 0;
 	GLuint sceneDepthRBO_ = 0;
 	GLuint godrayFBO_ = 0, godrayTex_ = 0;
-	GLuint godraySrcFBO_ = 0, godraySrcTex_ = 0;
 	GLuint pingpongFBO_[2] = {0, 0};
 	GLuint pingpongTex_[2] = {0, 0};
 	GLuint ssaoFBO_ = 0, ssaoBlurFBO_ = 0;
@@ -1121,9 +1218,17 @@ private:
 
 	bool mouseLocked_ = false;
 	bool firstMouse_ = true;
+	bool leftMouseDown_ = false;
+	bool rightMouseDown_ = false;
 	double lastMouseX_ = 0.0, lastMouseY_ = 0.0;
 
 	double lastStatsPrint_ = 0.0;
+
+	SoundtrackPlayer soundtrack_;
+	float musicVolume_ = 0.15f;                 // matches debug slider default
+	std::vector<std::string> breakSfxIds_;
+	std::vector<std::string> placeSfxIds_;
+	std::mt19937 sfxRng_{std::random_device{}()};
 };
 
 int main(int argc, char *argv[])

@@ -1,8 +1,8 @@
-cmake_minimum_required(VERSION 3.4)
+cmake_minimum_required(VERSION 3.12)
 include("${CMAKE_SOURCE_DIR}/FindGfxLibs.cmake")
 
 # Name of the project
-project(ASimpleGame)
+project(Voxism)
 
 # ---------------------------------------------------------------------------
 # Unit / property tests (no OpenGL context required — compile standalone)
@@ -45,14 +45,20 @@ set(CMAKE_CXX_STANDARD_REQUIRED 14)
 set(CMAKE_CXX_STANDARD 14)
 
 # Use glob to get the list of all source files.
-file(GLOB_RECURSE SOURCES "${CMAKE_SOURCE_DIR}/src/*.cpp" "${CMAKE_SOURCE_DIR}/ext/*/*.cpp" "${CMAKE_SOURCE_DIR}/ext/glad/src/*.c")
+# CONFIGURE_DEPENDS makes CMake re-check globs on each build so newly added
+# files (e.g. src/world/*.cpp) are picked up without manually re-running cmake.
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/src/*.cpp"
+    "${CMAKE_SOURCE_DIR}/src/audio/*.c"
+    "${CMAKE_SOURCE_DIR}/ext/*/*.cpp"
+    "${CMAKE_SOURCE_DIR}/ext/glad/src/*.c")
 # Exclude standalone test files (they define their own main())
 list(FILTER SOURCES EXCLUDE REGEX ".*/src/tests/.*\\.cpp$")
 
 # We don't really need to include header and resource files to build, but it's
 # nice to have them show up in IDEs.
-file(GLOB_RECURSE HEADERS "src/*.h" "ext/*/*.h" "ext/glad/*/*.h")
-file(GLOB_RECURSE GLSL "resources/*.glsl")
+file(GLOB_RECURSE HEADERS CONFIGURE_DEPENDS "src/*.h" "ext/*/*.h" "ext/glad/*/*.h")
+file(GLOB_RECURSE GLSL CONFIGURE_DEPENDS "resources/*.glsl")
 
 include_directories("ext")
 include_directories("ext/glad/include")
@@ -78,14 +84,21 @@ if(NOT WIN32)
   if(APPLE)
     # Add required frameworks for GLFW.
     target_link_libraries(${CMAKE_PROJECT_NAME} "-framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo")
+    # miniaudio backends on macOS
+    target_link_libraries(${CMAKE_PROJECT_NAME} "-framework CoreAudio -framework AudioToolbox -framework CoreFoundation")
   else()
     #Link the Linux OpenGL library
     target_link_libraries(${CMAKE_PROJECT_NAME} "GL" "dl")
+    # miniaudio on Linux needs pthread and libm (dl already linked above)
+    find_package(Threads REQUIRED)
+    target_link_libraries(${CMAKE_PROJECT_NAME} Threads::Threads "m")
   endif()
 
 else()
 
   # Link OpenGL on Windows
   target_link_libraries(${CMAKE_PROJECT_NAME} opengl32.lib)
+  # miniaudio uses WASAPI on Windows; ole32 provides COM init it relies on.
+  target_link_libraries(${CMAKE_PROJECT_NAME} ole32.lib)
 
 endif()

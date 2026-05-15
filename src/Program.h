@@ -27,8 +27,10 @@ public:
 
 	void addAttribute(const std::string &name);
 	void addUniform(const std::string &name);
+	void addUniformBuffObj(const std::string &name, GLuint blockBinding);
 	GLint getAttribute(const std::string &name) const;
 	GLint getUniform(const std::string &name) const;
+	GLint getUniformBuffObj(const std::string &name) const;
 
 protected:
 

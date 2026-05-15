@@ -115,6 +115,13 @@ void Program::addUniform(const std::string &name)
 	uniforms[name] = GLSL::getUniformLocation(pid, name.c_str(), isVerbose());
 }
 
+void Program::addUniformBuffObj(const std::string &name, GLuint blockBinding)
+{
+	GLint blockIndex = glGetUniformBlockIndex(pid, name.c_str());
+	uniforms[name] = blockIndex;
+	glUniformBlockBinding(pid, blockIndex, blockBinding);
+}
+
 GLint Program::getAttribute(const std::string &name) const
 {
 	std::map<std::string, GLint>::const_iterator attribute = attributes.find(name.c_str());
@@ -137,6 +144,20 @@ GLint Program::getUniform(const std::string &name) const
 		if (isVerbose())
 		{
 			std::cout << name << " is not a uniform variable" << std::endl;
+		}
+		return -1;
+	}
+	return uniform->second;
+}
+
+GLint Program::getUniformBuffObj(const std::string &name) const
+{
+	std::map<std::string, GLint>::const_iterator uniform = uniforms.find(name.c_str());
+	if (uniform == uniforms.end())
+	{
+		if (isVerbose())
+		{
+			std::cout << name << " is not a uniform buffer object" << std::endl;
 		}
 		return -1;
 	}

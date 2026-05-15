@@ -52,7 +52,7 @@ static void computeNormalsImpl(tinyobj::mesh_t &mesh)
 static void ensureTexcoordsXZImpl(tinyobj::shape_t &sh)
 {
 	size_t nv = sh.mesh.positions.size() / 3;
-	if (nv == 0)
+	if (nv == 0 || !sh.mesh.texcoords.empty())
 		return;
 	sh.mesh.texcoords.resize(nv * 2);
 	for (size_t i = 0; i < nv; i++) {
@@ -111,15 +111,26 @@ shared_ptr<Shape> ToolView::loadMesh(const string &resourceDirectory,
 }
 
 bool ToolView::init(const string &resourceDirectory,
-                    const shared_ptr<Program> &litProgram,
-                    GLuint textureID)
+                    const shared_ptr<Program> &litProgram)
 {
 	prog_ = litProgram;
-	textureID_ = textureID;
+	if (!prog_) {
+		cerr << "ToolView: missing lit texture shader program" << endl;
+		return false;
+	}
 
-	mesh_ = loadMesh(resourceDirectory, "tool.obj", "cube.obj");
+	texture_ = make_shared<Texture>();
+	texture_->setFilename(resourceDirectory + "/finalguntex.png");
+	texture_->setUnit(0);
+	texture_->init();
+	if (texture_->getID() == 0) {
+		cerr << "ToolView: failed to load finalguntex.png" << endl;
+		return false;
+	}
+
+	mesh_ = loadMesh(resourceDirectory, "gun1painted_colored.obj", "cube.obj");
 	if (!mesh_) {
-		cerr << "ToolView: failed to load tool.obj and fallback cube.obj" << endl;
+		cerr << "ToolView: failed to load gun1painted.obj and fallback cube.obj" << endl;
 		return false;
 	}
 	return true;
@@ -131,13 +142,18 @@ void ToolView::triggerUse(){
 
 
 void ToolView::update(float dt){
-	if (!useAnimating_)
-		return;
+	if (continuousUseActive_) {
+		continuousUseTime_ += dt;
+	} else {
+		continuousUseTime_ = 0.0f;
+	}
 
-	useAnimTime_ += dt;
-	if (useAnimTime_ >= useAnimDuration_) {
-		useAnimTime_ = useAnimDuration_;
-		useAnimating_ = false;
+	if (useAnimating_) {
+		useAnimTime_ += dt;
+		if (useAnimTime_ >= useAnimDuration_) {
+			useAnimTime_ = useAnimDuration_;
+			useAnimating_ = false;
+		}
 	}
 }
 
@@ -160,25 +176,25 @@ void ToolView::draw(int width,
 
 	glm::vec3 localOffset = offset_;
 	if (useBob_) {
-		float swayX = 0.02f * sin(animTime_ * 3.0f) * moveBlend_;
-		float swayY = 0.03f * sin(animTime_ * 8.0f) * moveBlend_;
+		float swayX = 0.02f * sin(animTime_ * 4.0f) * moveBlend_;
+		float swayY = 0.03f * sin(animTime_ * 10.0f) * moveBlend_;
 		localOffset += glm::vec3(swayX, swayY, 0.0f);
 	}
 
+	float useT = 0.0f;
+	if (useAnimDuration_ > 0.0f)
+		useT = glm::clamp(useAnimTime_ / useAnimDuration_, 0.0f, 1.0f);
 
+	float dip = sin(useT * 3.14159265f);
 
-    float useT = 0.0f;
-    if (useAnimDuration_ > 0.0f)
-        useT = glm::clamp(useAnimTime_ / useAnimDuration_, 0.0f, 1.0f);
+	glm::vec3 animOffset(0.0f);
 
-    float dip = sin(useT * 3.14159265f);
-
-    glm::vec3 animOffset(0.0f);
-    glm::vec3 animRot(0.0f);
-
-    animOffset += cameraUp * (-0.10f * dip);
-
-    animRot.x += -8.0f * dip;
+	if (continuousUseActive_) {
+		const float swing = sin(continuousUseTime_ * 12.0f);
+		animOffset += cameraForward * (-0.06f * swing);
+	} else {
+		animOffset += cameraForward * (-0.10f * dip);
+	}
 
 	glm::vec3 toolWorldPos =
 		cameraPos +
@@ -209,7 +225,7 @@ void ToolView::draw(int width,
 	glUniform3fv(prog_->getUniform("camPos"), 1, glm::value_ptr(cameraPos));
 	glUniform3fv(prog_->getUniform("lightColor"), 1, glm::value_ptr(lightColor));
 
-	glUniform3f(prog_->getUniform("matAmbient"), 0.18f, 0.18f, 0.18f);
+	glUniform3f(prog_->getUniform("matAmbient"), 0.35f, 0.35f, 0.35f);
 	glUniform3f(prog_->getUniform("matDiffuse"), 0.95f, 0.95f, 0.95f);
 	glUniform3f(prog_->getUniform("matSpecular"), 0.35f, 0.35f, 0.35f);
 	glUniform1f(prog_->getUniform("shininess"), 20.0f);
@@ -217,13 +233,11 @@ void ToolView::draw(int width,
 	glUniform1f(prog_->getUniform("emissiveStrength"), 0.0f);
 	glUniform3f(prog_->getUniform("emissiveColor"), 0.0f, 0.0f, 0.0f);
 	glUniform1i(prog_->getUniform("useEmissiveMap"), 0);
-
-	glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, textureID_);
-    glUniform1i(prog_->getUniform("Texture0"), 0);
+	texture_->bind(prog_->getUniform("Texture0"));
 
 	glEnable(GL_DEPTH_TEST);
 	glClear(GL_DEPTH_BUFFER_BIT);
 	mesh_->draw(prog_);
+	texture_->unbind();
 	prog_->unbind();
 }
