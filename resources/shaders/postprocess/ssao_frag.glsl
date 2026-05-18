@@ -19,39 +19,52 @@ uniform vec2 noiseScale;
 uniform float radius;
 // tiny depth offset to stop a surface from occluding itself
 uniform float bias;
+// size of one pixel in uv space (1/screenWidth, 1/screenHeight)
+uniform vec2 texelSize;
 
 // takes a screen uv and returns the 3d position of whatever surface is there
 vec3 reconstructViewPos(vec2 uv) {
-    // read how far away the surface is at this pixel
     float depth = texture(depthTex, uv).r;
-    // depth is stored as [0,1], convert it to ndc range [-1,1]
     vec4 ndcPos = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-    // reverse the camera projection to get the actual 3d position back
     vec4 viewPos = invProjection * ndcPos;
-    // perspective divide (required after matrix multiply)
     return viewPos.xyz / viewPos.w;
 }
 
-void main() {
+// depth-aware normal reconstruction:
+// dFdx/dFdy goes haywire at silhouette/voxel edges (the two derivative samples land on
+// different surfaces and the resulting "normal" points in a random direction, which
+// then biases the AO hemisphere into the geometry and produces dark blotches).
+//
+// instead, look at all four neighbors and pick the pair (left/right, top/bottom) that
+// is closer in depth to the center pixel. that pair almost always lies on the same
+// surface as the center, giving a robust normal even one pixel from a silhouette.
+vec3 reconstructNormal(vec3 centerPos, vec2 uv) {
+    vec3 pL = reconstructViewPos(uv - vec2(texelSize.x, 0.0));
+    vec3 pR = reconstructViewPos(uv + vec2(texelSize.x, 0.0));
+    vec3 pD = reconstructViewPos(uv - vec2(0.0, texelSize.y));
+    vec3 pU = reconstructViewPos(uv + vec2(0.0, texelSize.y));
 
+    vec3 dx = (abs(pR.z - centerPos.z) < abs(centerPos.z - pL.z)) ? (pR - centerPos)
+                                                                  : (centerPos - pL);
+    vec3 dy = (abs(pU.z - centerPos.z) < abs(centerPos.z - pD.z)) ? (pU - centerPos)
+                                                                  : (centerPos - pD);
+
+    return normalize(cross(dx, dy));
+}
+
+void main() {
     // --- where are we? ---
-    // get the 3d position of the surface at this pixel
     vec3 fragPos = reconstructViewPos(TexCoords);
 
     // --- which way is "up" from this surface? ---
-    // grab the 3d position of the pixel one step to the right and one step up
-    vec3 ddx = reconstructViewPos(TexCoords + vec2(dFdx(TexCoords.x), 0.0)) - fragPos;
-    vec3 ddy = reconstructViewPos(TexCoords + vec2(0.0, dFdy(TexCoords.y))) - fragPos;
-    // cross product of two vectors lying on the surface = vector pointing straight out of it
-    vec3 normal = normalize(cross(ddx, ddy));
+    vec3 normal = reconstructNormal(fragPos, TexCoords);
 
     // --- randomize the throw direction so we don't get repeating patterns ---
-    // sample the noise texture to get a random rotation vector for this pixel
     vec3 randomVec = normalize(texture(noiseTex, TexCoords * noiseScale).xyz);
     // gram-schmidt: make randomVec perpendicular to the normal (so it lies flat on the surface)
     vec3 tangent   = normalize(randomVec - normal * dot(randomVec, normal));
     vec3 bitangent = cross(normal, tangent);
-    // TBN is a rotation matrix: transforms sample directions to align with this surface + random spin
+    // TBN: transforms sample directions to align with this surface + random spin
     mat3 TBN       = mat3(tangent, bitangent, normal);
 
     // --- throw 64 balls and count how many hit something ---
@@ -59,29 +72,31 @@ void main() {
     for (int i = 0; i < 64; ++i) {
 
         // rotate the sample direction to face this surface, scale by radius
-        // samplePos is where ball #i lands in 3d space
         vec3 samplePos = fragPos + TBN * samples[i] * radius;
 
         // figure out which screen pixel this 3d point corresponds to
-        // (multiply by projection matrix, then remap from [-1,1] to [0,1])
         vec4 offset = projection * vec4(samplePos, 1.0);
         offset.xyz /= offset.w;           // perspective divide
         offset.xyz = offset.xyz * 0.5 + 0.5; // ndc [-1,1] -> uv [0,1]
 
+        // skip samples that project off-screen — clamped border depth reads as a
+        // false occluder and darkens screen edges (especially the gun in the corner).
+        if (offset.x < 0.0 || offset.x > 1.0 || offset.y < 0.0 || offset.y > 1.0)
+            continue;
+
         // look up the actual surface depth at that screen pixel
         float sampleDepth = reconstructViewPos(offset.xy).z;
 
-        // only count occlusion from surfaces within our radius
-        // (smoothstep fades out contributions from far-away geometry)
-        float rangeCheck = smoothstep(0.0, 1.0, radius / abs(fragPos.z - sampleDepth));
+        // range check: contributions fall off smoothly to zero when the occluder is
+        // farther than `radius` from us. the previous form (smoothstep on radius/|dz|)
+        // never fully attenuates — even very distant geometry leaks in.
+        float rangeCheck = 1.0 - smoothstep(radius * 0.5, radius, abs(fragPos.z - sampleDepth));
 
         // if the real surface is at the same depth or closer than our sample point,
-        // something is blocking it -> occluded. bias prevents self-intersection.
+        // something is blocking it. bias prevents self-intersection.
         occlusion += (sampleDepth >= samplePos.z + bias ? 1.0 : 0.0) * rangeCheck;
     }
 
-    // divide hits by 64 to get a 0->1 ratio, then invert:
-    // 1.0 = no occlusion (bright open area)
-    // 0.0 = fully occluded (dark corner/crease)
+    // 1.0 = no occlusion, 0.0 = fully occluded
     FragColor = 1.0 - (occlusion / 64.0);
 }

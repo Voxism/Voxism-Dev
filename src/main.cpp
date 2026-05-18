@@ -207,7 +207,7 @@ struct PostProcessToggle {
     float bloomStrength  = 1.6f;
     float ssaoRadius     = 0.75f;
     float ssaoBias       = 0.025f;
-    float ssaoIntensity  = 1.5f;
+    float ssaoIntensity  = 1.0f;
 };
 
 class Application : public EventCallbacks {
@@ -431,6 +431,7 @@ public:
 			ssaoProg_->addUniform("noiseScale");
 			ssaoProg_->addUniform("radius");
 			ssaoProg_->addUniform("bias");
+			ssaoProg_->addUniform("texelSize");
 		}
 
 		// SSAO blur shader
@@ -443,7 +444,9 @@ public:
 			postToggles_.ssaoEnabled = false;
 		} else {
 			ssaoBlurProg_->addUniform("ssaoInput");
+			ssaoBlurProg_->addUniform("depthTex");
 			ssaoBlurProg_->addUniform("texelSize");
+			ssaoBlurProg_->addUniform("invProjection");
 		}
 	}
 
@@ -729,6 +732,7 @@ public:
 		glUniform2f(ssaoProg_->getUniform("noiseScale"), (float)postW_ / 4.0f, (float)postH_ / 4.0f);
 		glUniform1f(ssaoProg_->getUniform("radius"), postToggles_.ssaoRadius);
 		glUniform1f(ssaoProg_->getUniform("bias"), postToggles_.ssaoBias);
+		glUniform2f(ssaoProg_->getUniform("texelSize"), 1.0f / (float)postW_, 1.0f / (float)postH_);
 
 		drawFullscreenQuad();
 		ssaoProg_->unbind();
@@ -743,7 +747,11 @@ public:
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, ssaoTex_);
 		glUniform1i(ssaoBlurProg_->getUniform("ssaoInput"), 0);
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
+		glUniform1i(ssaoBlurProg_->getUniform("depthTex"), 1);
 		glUniform2f(ssaoBlurProg_->getUniform("texelSize"), 1.0f / (float)postW_, 1.0f / (float)postH_);
+		glUniformMatrix4fv(ssaoBlurProg_->getUniform("invProjection"), 1, GL_FALSE, glm::value_ptr(invP));
 
 		drawFullscreenQuad();
 		ssaoBlurProg_->unbind();
