@@ -24,10 +24,12 @@ class Chunk
         // METHODS GENERALLY CALLED ONCE PER CHUNK
         Chunk(ChunkManager& chunkManager, ChunkPos& cp); 
 
-        // Generate the chunk
-        void generate();
         // bind buffers
         void bindMesh();
+        // Generate the chunk
+        void generate();
+        // Update Buffers
+        void updateBuffer();
 
         // METHODS FOR UPDATING AND DRAWING
         // Update the OccupancyInts array.
@@ -54,8 +56,10 @@ class Chunk
         int getLocalVoxelSizeZ() const;
         bool isOccupancyQueued() const { return occupancyQueued_; }
         bool isMeshQueued() const { return meshQueued_; }
+        bool isGenerated() const { return generated_; }
         void setOccupancyQueued(bool queued) { occupancyQueued_ = queued; }
         void setMeshQueued(bool queued) { meshQueued_ = queued; }
+        void setGenerated(bool generated) { generated_ = generated; }
     
     private:
         ChunkManager& cm;
@@ -65,6 +69,7 @@ class Chunk
         bool occupancyQueued_ = false;
         bool meshQueued_ = false;
         bool materialDirty_ = false;
+        bool generated_ = false;
         glm::ivec3 materialDirtyMin_ = glm::ivec3(0);
         glm::ivec3 materialDirtyMax_ = glm::ivec3(0);
 
@@ -84,7 +89,6 @@ class Chunk
         std::vector<uint32_t>  occupancyInts;
 
         // BUFFER RELATED THINGS
-        void updateBuffer();
         int bufferUpdateMethod;
 
         // Used for buffer update methods 0 and 2

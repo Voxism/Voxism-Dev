@@ -13,6 +13,8 @@ Chunk::Chunk(ChunkManager& cm, ChunkPos& cp):
     {
     // intiialize chunk to zeros.
     occupancyInts = std::vector<uint32_t>(cm.occupancyXsize*cm.occupancyYsize*cm.occupancyZsize, 0); 
+    int textureSize = cm.chunkSizeInts*16;
+    cTexData = std::vector<uint8_t>(textureSize * textureSize * textureSize, 1u);
     // intialize const for world position of chunk.
     worldcp = glm::vec3(cp.x*cm.chunkSizeMeters, 
                         cp.y*cm.chunkSizeMeters, 
@@ -170,7 +172,7 @@ void Chunk::generate(){
         }
     }
 
-    cTexData = std::vector<uint8_t>(textureSize * textureSize * textureSize, 1u);
+    // cTexData = std::vector<uint8_t>(textureSize * textureSize * textureSize, 1u);
     for (int tz = 0; tz < textureSize; ++tz) {
         const int zVox = std::min(sideVox - 1, tz * 2);
         const float worldZ = worldcp.z + (static_cast<float>(tz) + 0.5f) * texelWorldSize;
@@ -187,9 +189,9 @@ void Chunk::generate(){
         }
     }
 
-    glTexImage3D(GL_TEXTURE_3D, 0, GL_R8UI, textureSize, textureSize, textureSize,
-        0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, cTexData.data()
-    );
+    // glTexImage3D(GL_TEXTURE_3D, 0, GL_R8UI, textureSize, textureSize, textureSize,
+        // 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, cTexData.data()
+    // );
 }
 
 // Generate the vertex array, vertex buffer, and color buffer.
@@ -558,7 +560,7 @@ void Chunk::updateMesh()
     // std::cout << "nBuff Size:" << nBuff.size() << std::endl;
     // std::cout << "vBuff Size:" << vBuff.size() << std::endl;
     
-    updateBuffer();
+    // updateBuffer();
 
 }
 
@@ -691,6 +693,13 @@ void Chunk::updateBuffer(){
     // std::cout << "vBuff data: " << vBuff.size()*sizeof(GLfloat) << std::endl;
     // std::cout << "eBuff data: " << eBuff.size()*sizeof(unsigned int) << std::endl;
 
+    if (materialDirty_){
+        uploadDirtyMaterialRegion();
+    }
+    // int textureSize = cm.chunkSizeInts*16;
+    // glTexImage3D(GL_TEXTURE_3D, 0, GL_R8UI, textureSize, textureSize, textureSize,
+    //     0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, cTexData.data()
+    // );
 
     if (bufferUpdateMethod == 2){
         // MORE ADVANCED AND FASTER

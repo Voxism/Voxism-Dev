@@ -238,6 +238,8 @@ public:
 		sunWorld_ = vec3(12.0f, 30.0f, 20.0f);
 
 
+		chunkManager->generateChunks(vec3(0,0,0));
+
 		// Materials initialization
 		GLuint materialsBindingPoint = 0;
 		materials->init(materialsBindingPoint);
@@ -1189,9 +1191,11 @@ private:
 	shared_ptr<Materials> materials = make_shared<Materials>();
 	shared_ptr<ChunkManager> chunkManager = make_shared<ChunkManager>(
 	16,// voxPerMeter 
-	16,// chunkSizeMeters
+	8,// chunkSizeMeters
 	32,// renderDistance (in meters)
-	16// renderHeight (int meters)
+	16,// renderHeight (int meters)
+	64,// generationDistance (in meters)
+	32 // generationHeight (in meters)
 	);
 
 	shared_ptr<Texture> collectibleTex_;

@@ -9,11 +9,15 @@ ChunkManager::ChunkManager(
     int voxPerMeter,
     float chunkSizeMeters,
     int renderDistance, 
-    int renderHeight):
+    int renderHeight,
+    int generationDistance,
+    int generationHeight):
     voxPerMeter(voxPerMeter), 
     chunkSizeMeters(chunkSizeMeters),
     renderDistance(renderDistance),
     renderHeight(renderHeight),
+    generationDistance(generationDistance),
+    generationHeight(generationHeight),
     terrainMinChunks(0),
     terrainMaxChunks(0),
     occupancyUpdateQueue(),
@@ -75,17 +79,18 @@ glm::ivec3 ChunkManager::worldToLocalVoxel(const glm::ivec3 &voxel) const
     );
 }
 
-std::shared_ptr<Chunk> ChunkManager::generateChunk(ChunkPos& chunkPos){
-    std::shared_ptr<Chunk> newChunk = std::make_shared<Chunk>(*this, chunkPos);
-    // std::cout << "binding" << std::endl;
-    newChunk->bindMesh();
-    // std::cout << "generating" << std::endl;
-    newChunk->generate();
-    // std::cout << "updating" << std::endl;
-    newChunk->updateMesh();
-    // std::cout << "Return" << std::endl;
-    return newChunk; 
-}
+// std::shared_ptr<Chunk> ChunkManager::generateChunk(ChunkPos& chunkPos){
+//     std::shared_ptr<Chunk> newChunk = std::make_shared<Chunk>(*this, chunkPos);
+//     // std::cout << "binding" << std::endl;
+//     newChunk->bindMesh();
+//     // std::cout << "generating" << std::endl;
+//     newChunk->generate();
+//     // std::cout << "updating" << std::endl;
+//     // newChunk->updateMesh();
+//     bufferUpdateQueue.push_back(newChunk);
+//     // std::cout << "Return" << std::endl;
+//     return newChunk; 
+// }
 
 std::shared_ptr<Chunk> ChunkManager::getChunk(const ChunkPos &chunkPos) const
 {
@@ -314,7 +319,95 @@ void ChunkManager::updateChunks(){
         C->updateMesh(); //also updates the buffers.
         C->setMeshQueued(false);
         meshUpdateQueue.pop_front();
+        bufferUpdateQueue.push_back(C);
     }
+
+    if (!bufferUpdateQueue.empty()){
+        std::cout << "updating Buffer for chunk" << std::endl;
+        std::shared_ptr<Chunk> C = bufferUpdateQueue.front();
+        C->updateBuffer();
+        bufferUpdateQueue.pop_front();
+    }
+}
+
+template<typename Func>
+void ChunkManager::forEachChunkInGenerationDistance(glm::vec3 center, Func func){
+    int x = center.x/chunkSizeMeters;
+    int z = center.z/chunkSizeMeters;
+
+    // checks each chunk in a vertical slice. if it doesn't exist then generate it.
+    auto forSlice = [&](int x, int z, auto func){
+        int height = generationHeight/chunkSizeMeters; 
+        for (int y=-height; y<height; y++){
+            ChunkPos chunkPos = ChunkPos{x, y, z};
+            func(chunkPos);
+        }
+    };
+    
+    // Attempt to generate the current chunk.
+    forSlice(x, z, func);
+    // Generate chunks in concentric rings around the player.
+    int maxDistance = renderDistance/chunkSizeInts;
+    for (int distance = 1; distance < maxDistance; distance++){
+        int dx = -distance;
+        int dz = -distance;
+        // -z wall
+        while(dx<distance){
+            dx++;
+            forSlice(x+dx, z+dz, func);
+        }
+        // +x wall
+        while(dz<distance){
+            dz++;
+            forSlice(x+dx, z+dz, func);
+        }
+        // +Z wall
+        while(dx>-distance){
+            dx--;
+            forSlice(x+dx, z+dz, func);
+        }
+        // -x wall
+        while(dz>-distance){
+            dz--;
+            forSlice(x+dx, z+dz, func);
+        }
+    }
+}
+
+void ChunkManager::generateChunks(glm::vec3 center){
+    // Create Chunks and Bind Chunks (main Thread)
+    forEachChunkInGenerationDistance(
+        center, 
+        [&](ChunkPos chunkPos){
+            auto chunk = chunkMap.find(chunkPos);
+            if (chunk == chunkMap.end()){
+                // Make, bind, insert.
+                std::shared_ptr<Chunk> newChunk = std::make_shared<Chunk>(*this, chunkPos);
+                newChunk->bindMesh();
+                chunkMap[chunkPos] = newChunk;
+            }
+        }
+    );
+    // generate Chunks and add to bufferUpdateQueue (worker thread)
+    std::thread([&, center]() {
+        forEachChunkInGenerationDistance(
+            center, 
+            [&](ChunkPos chunkPos){
+                auto chunk = chunkMap.find(chunkPos);
+                if (chunk != chunkMap.end()){
+                    if (!chunk->second->isGenerated()){
+                        float startTime = glfwGetTime();
+                        chunk->second->generate();
+                        chunk->second->updateMesh();
+                        chunk->second->setGenerated(true);
+                        float totalTime = glfwGetTime()-startTime;
+                        std::cout << "ChunkGen (" << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << ") " << std::fixed << std::setprecision(4) << totalTime << "s" << std::endl;
+                        bufferUpdateQueue.push_back(chunk->second);
+                    }
+                }
+            }
+        );
+    }).detach();
 }
 
 void ChunkManager::drawChunks(const Program& prog){
@@ -324,14 +417,9 @@ void ChunkManager::drawChunks(const Program& prog){
             for (int x = -renderDistance/chunkSizeMeters; x<renderDistance/chunkSizeMeters; x++){
                 ChunkPos chunkPos = ChunkPos{x, y, z};
                 auto chunk = chunkMap.find(chunkPos);
-                if (chunk == chunkMap.end()){
-                    
-                    float startTime = glfwGetTime();
-                    chunkMap[chunkPos] = generateChunk(chunkPos);
-                    float totalTime = glfwGetTime()-startTime;
-                    std::cout << "ChunkGen (" << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << ") " << std::fixed << std::setprecision(4) << totalTime << "s" << std::endl;
+                if (chunk != chunkMap.end() && chunk->second->isGenerated()){
+                    chunkMap[chunkPos]->drawMesh(prog);
                 }
-                chunkMap[chunkPos]->drawMesh(prog);
             }
         }
     }
