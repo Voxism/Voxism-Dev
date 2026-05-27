@@ -7,7 +7,6 @@
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <GLFW/glfw3.h>
 #include "../Program.h"
 #include "ChunkPos.h"
 #include <iostream>
@@ -22,7 +21,7 @@ class ChunkManager;
 class Chunk
 {
     public:
-        std::mutex mutex;
+        mutable std::mutex mutex;
         bool negXOccluded = false, posXOccluded = false;
         bool negYOccluded = false, posYOccluded = false; 
         bool negZOccluded = false, posZOccluded = false;
@@ -113,6 +112,9 @@ class Chunk
 
         GLuint cTexID;
         std::vector<uint8_t> cTexData;
+
+        // last element count uploaded to the GPU (draw uses this, not live eBuff.size())
+        size_t uploadedElementCount_ = 0;
 
         // used for buffer update method 1
         void *vPtr; 

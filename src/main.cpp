@@ -1194,7 +1194,7 @@ private:
 	shared_ptr<Materials> materials = make_shared<Materials>();
 	shared_ptr<ChunkManager> chunkManager = make_shared<ChunkManager>(
 	16,// voxPerMeter 
-	4,// chunkSizeMeters
+	8,// chunkSizeMeters
 	32,// renderDistance (in meters)
 	16,// renderHeight (int meters)
 	32,// generationDistance (in meters)

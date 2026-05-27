@@ -6,6 +6,7 @@
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <utility>
 using namespace std;
 
 // Class that represents a simple thread pool
@@ -45,7 +46,7 @@ public:
                         }
 
                         // Get the next task from the queue
-                        task = move(tasks_.front());
+                        task = std::move(tasks_.front());
                         tasks_.pop();
                     }
 
@@ -79,7 +80,7 @@ public:
     {
         {
             unique_lock<std::mutex> lock(queue_mutex_);
-            tasks_.emplace(move(task));
+            tasks_.emplace(std::move(task));
         }
         cv_.notify_one();
     }

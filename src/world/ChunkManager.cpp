@@ -1,5 +1,6 @@
 #include "ChunkManager.h"
 
+#include <chrono>
 #include <cmath>
 #include <limits>
 
@@ -94,17 +95,25 @@ std::shared_ptr<Chunk> ChunkManager::getChunk(const ChunkPos &chunkPos) const
 
 void ChunkManager::queueOccupancyUpdate(const std::shared_ptr<Chunk> &chunk)
 {
-    if (!chunk || chunk->isOccupancyQueued()) {
+    if (!chunk) {
         return;
     }
-    // Add chunk to the occupancy update queue thread pool.
-    // will update the texture and occupancy for meshupdate to work with.
+
+    {
+        std::lock_guard<std::mutex> lock(chunk->mutex);
+        if (chunk->isOccupancyQueued()) {
+            return;
+        }
+        chunk->setOccupancyQueued(true);
+    }
+
     occupancyUpdatePool.enqueue(
         [this, chunk]{
-            std::lock_guard<std::mutex> lock1(chunk->mutex);
-            chunk->setOccupancyQueued(true);
-            chunk->updateOccupancy();
-            chunk->setOccupancyQueued(false);
+            {
+                std::lock_guard<std::mutex> lock1(chunk->mutex);
+                chunk->updateOccupancy();
+                chunk->setOccupancyQueued(false);
+            }
             queueMeshUpdate(chunk);
         }
     );
@@ -112,16 +121,22 @@ void ChunkManager::queueOccupancyUpdate(const std::shared_ptr<Chunk> &chunk)
 
 void ChunkManager::queueMeshUpdate(const std::shared_ptr<Chunk> &chunk)
 {
-    if (!chunk || chunk->isMeshQueued()) {
+    if (!chunk) {
         return;
     }
-    // Add chunk the mesh update queue thread pool
-    // will generate the mesh for the chunk.
+
+    {
+        std::lock_guard<std::mutex> lock(chunk->mutex);
+        if (chunk->isMeshQueued()) {
+            return;
+        }
+        chunk->setMeshQueued(true);
+    }
+
     meshUpdatePool.enqueue(
         [this, chunk]{
             {
                 std::lock_guard<std::mutex> lock1(chunk->mutex);
-                chunk->setMeshQueued(true);
                 chunk->updateMesh();
                 chunk->setMeshQueued(false);
             }
@@ -294,6 +309,12 @@ void ChunkManager::modifyChunks(const std::shared_ptr<IChunkModifier> &chunkMod)
                 if (!chunk) {
                     continue;
                 }
+                {
+                    std::lock_guard<std::mutex> lock(chunk->mutex);
+                    if (!chunk->isGenerated()) {
+                        continue;
+                    }
+                }
                 chunk->queueModifier(chunkMod);
                 queueOccupancyUpdate(chunk);
             }
@@ -317,6 +338,7 @@ void ChunkManager::updateChunks(){
         {
             std::unique_lock<std::mutex> lock(C->mutex);
             C->updateBuffer();
+            C->setGenerated(true);
         }
     }
 }
@@ -400,11 +422,12 @@ void ChunkManager::generateChunks(glm::vec3 center){
                 {
                     {
                         std::lock_guard<std::mutex> lock(chunkPtr->mutex);
-                        float startTime = glfwGetTime();
+                        const auto startTime = std::chrono::steady_clock::now();
                         chunkPtr->generate();
                         chunkPtr->updateMesh();
-                        chunkPtr->setGenerated(true);
-                        float totalTime = glfwGetTime()-startTime;
+                        const float totalTime = std::chrono::duration<float>(
+                            std::chrono::steady_clock::now() - startTime).count();
+                        (void)totalTime;
                         // std::cout << "ChunkGen (" << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << ") " << std::fixed << std::setprecision(4) << totalTime << "s" << std::endl;
                     }
                     {
