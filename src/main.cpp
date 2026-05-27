@@ -34,6 +34,7 @@
 #include "tools/ToolManager.h"
 #include "tools/ToolPreviewRenderer.h"
 #include "audio/SoundtrackPlayer.h"
+#include "particles/BreakParticleSystem.h"
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_glfw.h>
@@ -316,6 +317,8 @@ public:
 		toolView_.setFov(55.0f);
 		if (!previewRenderer_.init(resourceDirectory))
 			cerr << "previewRenderer init failed" << endl;
+		if (!breakParticles_.init(resourceDirectory))
+			cerr << "breakParticles init failed" << endl;
 
 		crosshair_.init(resourceDirectory);
 		crosshair_.setSize(8.0f);
@@ -369,6 +372,15 @@ public:
 		if (placeSfxIds_.empty()) return;
 		std::uniform_int_distribution<size_t> dist(0, placeSfxIds_.size() - 1);
 		soundtrack_.playSfx(placeSfxIds_[dist(sfxRng_)]);
+	}
+
+	void spawnBreakParticles(const ChunkEditSummary &editSummary)
+	{
+		if (editSummary.valid &&
+			editSummary.action == ChunkEditAction::Delete &&
+			editSummary.affectedVoxelCount > 0) {
+			breakParticles_.spawnDeleteBurst(editSummary, chunkManager->voxSizeMeters);
+		}
 	}
 
 	void initPostProcessShaders(const string &resourceDirectory)
@@ -877,10 +889,12 @@ public:
 			}
 			glm::vec3 eye = camera->GetCameraPos();
 			glm::vec3 forward = glm::normalize(camera->GetForward());
-			if (toolManager_.beginAction(*chunkManager, eye, forward, mode)) {
+			ChunkEditSummary editSummary;
+			if (toolManager_.beginAction(*chunkManager, eye, forward, mode, &editSummary)) {
 				if (!toolManager_.supportsContinuousAction(mode)) {
 					toolView_.triggerUse();
 				}
+				spawnBreakParticles(editSummary);
 				if (mode == ToolMode::Build)  playPlaceSfx();
 				else                          playBreakSfx();
 			}
@@ -946,19 +960,23 @@ public:
 		if (mouseLocked_ && leftMouseDown_ && toolManager_.supportsContinuousAction(ToolMode::Build)) {
 			const glm::vec3 eye = camera->GetCameraPos();
 			const glm::vec3 forward = glm::normalize(camera->GetForward());
-			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Build)) {
+			ChunkEditSummary editSummary;
+			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Build, &editSummary)) {
 				playPlaceSfx();
 			}
 		}
 		if (mouseLocked_ && rightMouseDown_ && toolManager_.supportsContinuousAction(ToolMode::Delete)) {
 			const glm::vec3 eye = camera->GetCameraPos();
 			const glm::vec3 forward = glm::normalize(camera->GetForward());
-			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Delete)) {
+			ChunkEditSummary editSummary;
+			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Delete, &editSummary)) {
+				spawnBreakParticles(editSummary);
 				playBreakSfx();
 			}
 		}
 		
 		toolView_.update(dt);
+		breakParticles_.update(dt);
 
 		toolView_.setAnimTime(animTime_);
 		toolView_.setMoveBlend(glm::clamp(glm::length(wish), 0.0f, 1.0f));
@@ -987,6 +1005,7 @@ public:
 
 		ToolPreview preview = toolManager_.getPreview(*chunkManager, eye, glm::normalize(camera->GetForward()), ToolMode::Build);
 		previewRenderer_.draw(preview, chunkManager->voxSizeMeters, P, V);
+		breakParticles_.draw(P, V, sunWorld_ - eye, chunkManager->voxSizeMeters);
 
 		skybox_.draw(P, Vsky);
 	}
@@ -1184,6 +1203,7 @@ private:
 	ToolPreviewRenderer previewRenderer_;
 	Crosshair crosshair_;
 	Skybox skybox_;
+	BreakParticleSystem breakParticles_;
 	// GltfMesh characterMesh_;
 
 	shared_ptr<Program> texProg_;

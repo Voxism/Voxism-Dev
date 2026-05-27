@@ -90,3 +90,20 @@ const char *Materials::paletteName(int index)
     }
     return kNames[index];
 }
+
+glm::vec3 Materials::paletteColor(int index)
+{
+    static const glm::vec3 kColors[] = {
+        glm::vec3(0.10f, 0.30f, 0.10f),
+        glm::vec3(0.38f, 0.38f, 0.38f),
+        glm::vec3(0.62f, 0.18f, 0.16f),
+        glm::vec3(0.72f, 0.63f, 0.30f),
+        glm::vec3(0.42f, 0.26f, 0.12f),
+        glm::vec3(0.95f, 0.78f, 0.18f)
+    };
+
+    if (index < 0 || index >= paletteCount) {
+        return glm::vec3(0.38f, 0.38f, 0.38f);
+    }
+    return kColors[index];
+}

@@ -87,6 +87,34 @@ bool Chunk::isOccupiedLocal(int x, int y, int z) const
     return (occupancyInts[occupancyIndex] & (1u << bit)) != 0u;
 }
 
+bool Chunk::isOccupiedLocalUnlocked(int x, int y, int z) const
+{
+    if (!isLocalInBounds(x, y, z)) {
+        return false;
+    }
+
+    const int intX = x / 32;
+    const int bit = 31 - (x % 32);
+    const int occupancyIndex = z * cm.occupancyXsize * cm.occupancyYsize +
+        y * cm.occupancyXsize + intX;
+    return (occupancyInts[occupancyIndex] & (1u << bit)) != 0u;
+}
+
+uint8_t Chunk::getMaterialLocalUnlocked(int x, int y, int z) const
+{
+    if (!isLocalInBounds(x, y, z) || cTexData.empty()) {
+        return 0;
+    }
+
+    const int texX = x / 2;
+    const int texY = y / 2;
+    const int texZ = z / 2;
+    const int textureSize = cm.chunkSizeInts * 16;
+    const int texIndex = texZ * textureSize * textureSize +
+        texY * textureSize + texX;
+    return cTexData[texIndex];
+}
+
 void Chunk::setOccupiedLocal(int x, int y, int z, bool occupied)
 {
     if (!isLocalInBounds(x, y, z)) {

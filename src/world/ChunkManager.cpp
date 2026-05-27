@@ -288,9 +288,86 @@ bool ChunkManager::raycastVoxels(const glm::vec3 &origin,
     return false;
 }
 
-void ChunkManager::modifyChunks(const std::shared_ptr<IChunkModifier> &chunkMod){
+void ChunkManager::collectDeletedVoxels(const IChunkModifier &chunkMod,
+    const glm::ivec3 &minVoxel,
+    const glm::ivec3 &maxVoxel,
+    ChunkEditSummary &summary) const
+{
+    const int chunkSizeVoxels = chunkSizeInts * 32;
+    const ChunkPos minChunk = {
+        floorDiv(minVoxel.x, chunkSizeVoxels),
+        floorDiv(minVoxel.y, chunkSizeVoxels),
+        floorDiv(minVoxel.z, chunkSizeVoxels)
+    };
+    const ChunkPos maxChunk = {
+        floorDiv(maxVoxel.x, chunkSizeVoxels),
+        floorDiv(maxVoxel.y, chunkSizeVoxels),
+        floorDiv(maxVoxel.z, chunkSizeVoxels)
+    };
+
+    for (int z = minChunk.z; z <= maxChunk.z; ++z) {
+        for (int y = minChunk.y; y <= maxChunk.y; ++y) {
+            for (int x = minChunk.x; x <= maxChunk.x; ++x) {
+                const ChunkPos chunkPos {x, y, z};
+                if (!chunkMod.effectsChunk(chunkPos)) {
+                    continue;
+                }
+
+                const auto chunk = getChunk(chunkPos);
+                if (!chunk) {
+                    continue;
+                }
+
+                std::lock_guard<std::mutex> lock(chunk->mutex);
+                if (!chunk->isGenerated()) {
+                    continue;
+                }
+
+                const glm::ivec3 chunkVoxelMin(
+                    chunkPos.x * chunkSizeVoxels,
+                    chunkPos.y * chunkSizeVoxels,
+                    chunkPos.z * chunkSizeVoxels);
+                const glm::ivec3 chunkVoxelMax = chunkVoxelMin + glm::ivec3(chunkSizeVoxels - 1);
+                const glm::ivec3 clippedMin = glm::max(minVoxel, chunkVoxelMin);
+                const glm::ivec3 clippedMax = glm::min(maxVoxel, chunkVoxelMax);
+
+                for (int worldZ = clippedMin.z; worldZ <= clippedMax.z; ++worldZ) {
+                    for (int worldY = clippedMin.y; worldY <= clippedMax.y; ++worldY) {
+                        for (int worldX = clippedMin.x; worldX <= clippedMax.x; ++worldX) {
+                            const glm::ivec3 voxel(worldX, worldY, worldZ);
+                            if (!chunkMod.affectsWorldVoxel(voxel)) {
+                                continue;
+                            }
+
+                            const int localX = worldX - chunkVoxelMin.x;
+                            const int localY = worldY - chunkVoxelMin.y;
+                            const int localZ = worldZ - chunkVoxelMin.z;
+                            if (chunk->isOccupiedLocalUnlocked(localX, localY, localZ)) {
+                                ChunkEditSummary::DeletedVoxel deletedVoxel;
+                                deletedVoxel.voxel = voxel;
+                                deletedVoxel.materialID = chunk->getMaterialLocalUnlocked(localX, localY, localZ);
+                                summary.deletedVoxels.push_back(deletedVoxel);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+ChunkEditSummary ChunkManager::modifyChunks(const std::shared_ptr<IChunkModifier> &chunkMod){
+    ChunkEditSummary summary;
     if (!chunkMod) {
-        return;
+        return summary;
+    }
+
+    summary.valid = true;
+    summary.action = chunkMod->isFillOperation() ? ChunkEditAction::Fill : ChunkEditAction::Delete;
+    chunkMod->getAffectedVoxelBounds(summary.minVoxel, summary.maxVoxel);
+    if (summary.action == ChunkEditAction::Delete) {
+        collectDeletedVoxels(*chunkMod, summary.minVoxel, summary.maxVoxel, summary);
+        summary.affectedVoxelCount = summary.deletedVoxels.size();
     }
 
     ChunkPos minChunk {};
@@ -320,7 +397,8 @@ void ChunkManager::modifyChunks(const std::shared_ptr<IChunkModifier> &chunkMod)
             }
         }
     }
-};
+    return summary;
+}
 
 // Called by the main thread.
 void ChunkManager::updateChunks(){
