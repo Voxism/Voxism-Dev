@@ -1,6 +1,7 @@
 #include "Chunk.h"
 #include "ChunkManager.h"
 #include <algorithm>
+#include <chrono>
 
 Chunk::Chunk(ChunkManager& cm, ChunkPos& cp):
     cm(cm),
@@ -25,6 +26,10 @@ Chunk::Chunk(ChunkManager& cm, ChunkPos& cp):
 
 void Chunk::queueModifier(const std::shared_ptr<IChunkModifier> &modifier)
 {
+    if (!modifier) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex);
     modifierUpdateQueue.push_back(modifier);
 }
 
@@ -56,6 +61,7 @@ bool Chunk::isOccupiedLocal(int x, int y, int z) const
         return false;
     }
 
+    std::lock_guard<std::mutex> lock(mutex);
     const int intX = x / 32;
     const int bit = 31 - (x % 32);
     const int occupancyIndex = z * cm.occupancyXsize * cm.occupancyYsize +
@@ -283,8 +289,8 @@ void Chunk::updateMesh()
     // 2 = binaryMeshing and greedy meshing (WIP)
     int updateType = 2;
     int debugMode = 0; // 0 = off, 1 = on.
-    float start;
-    if (debugMode == 1) start = glfwGetTime();
+    std::chrono::steady_clock::time_point meshStart;
+    if (debugMode == 1) meshStart = std::chrono::steady_clock::now();
     
     // Clear Buffers before generating a new mesh.
     vBuff.clear();
@@ -543,7 +549,12 @@ void Chunk::updateMesh()
         }
     }
  
-    if (debugMode == 1) std::cout << "MeshUpdate: " << std::fixed << std::setprecision(4) << glfwGetTime()-start << "s updateType:" << updateType << std::endl;
+    if (debugMode == 1) {
+        const float elapsed = std::chrono::duration<float>(
+            std::chrono::steady_clock::now() - meshStart).count();
+        std::cout << "MeshUpdate: " << std::fixed << std::setprecision(4)
+                  << elapsed << "s updateType:" << updateType << std::endl;
+    }
     // std::cout << "eBuff Size:" << eBuff.size() << std::endl;
     // std::cout << "nBuff Size:" << nBuff.size() << std::endl;
     // std::cout << "vBuff Size:" << vBuff.size() << std::endl;
@@ -557,6 +568,9 @@ void Chunk::drawMesh(const Program& prog)
     // Quick Sanity Checks
     
     assert(vBuff.size() % 3 == 0);
+    if (uploadedElementCount_ == 0) {
+        return;
+    }
 
     // Bind Uniforms
     glUniform3fv(prog.getUniform("chunkWorldPos"), 1, glm::value_ptr(worldcp));
@@ -595,8 +609,8 @@ void Chunk::drawMesh(const Program& prog)
     // ELEMENT ARRAY
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, eBuffID);
     
-    // Draw mesh
-    glDrawElements(GL_TRIANGLES, (int)eBuff.size(), GL_UNSIGNED_INT, (const void *)0);
+    // Draw mesh (use last GPU upload; CPU mesh may be rebuilding on a worker thread)
+    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(uploadedElementCount_), GL_UNSIGNED_INT, (const void *)0);
 
     glDisableVertexAttribArray(vertAttr);
     glDisableVertexAttribArray(normalAttr);
@@ -713,6 +727,8 @@ void Chunk::updateBuffer(){
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, eBuffID);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, eBuff.size()*sizeof(unsigned int), eBuff.data(), GL_STREAM_DRAW);
     }
+
+    uploadedElementCount_ = eBuff.size();
 }
 
 void Chunk::addGreedyFace(uint32_t* mask, int maskIndex,
@@ -793,8 +809,10 @@ void Chunk::addGreedyFace(uint32_t* mask, int maskIndex,
         uint32_t* faceInt = &mask[maskIndex];
         assert(*faceInt != 0u);
         int leadingZeros = __builtin_clz(*faceInt);
-        int width = __builtin_clz(~(*faceInt << leadingZeros)); // how many 1s in a row are there.
-        int shiftDistance = 32 - (width+leadingZeros);
+        uint32_t shifted = *faceInt << leadingZeros;
+        uint32_t inverted = ~shifted;
+        int width = (inverted == 0u) ? (32 - leadingZeros) : __builtin_clz(inverted);
+        int shiftDistance = 32 - (width + leadingZeros);
         uint32_t compareInt = (*faceInt >> (shiftDistance)) << shiftDistance; // isolates the 1s group.
         *faceInt &= ~compareInt; // removes the ones from the original int
     
