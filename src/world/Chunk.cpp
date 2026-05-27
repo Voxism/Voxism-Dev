@@ -114,6 +114,7 @@ void Chunk::setMaterialLocal(int x, int y, int z, uint8_t materialID)
 void Chunk::uploadDirtyMaterialRegion()
 {
     if (!materialDirty_ || cTexData.empty()) {
+        std::cout<< "Nothing to Set" << std::endl;
         return;
     }
 
@@ -172,7 +173,6 @@ void Chunk::generate(){
         }
     }
 
-    // cTexData = std::vector<uint8_t>(textureSize * textureSize * textureSize, 1u);
     for (int tz = 0; tz < textureSize; ++tz) {
         const int zVox = std::min(sideVox - 1, tz * 2);
         const float worldZ = worldcp.z + (static_cast<float>(tz) + 0.5f) * texelWorldSize;
@@ -189,9 +189,9 @@ void Chunk::generate(){
         }
     }
 
-    // glTexImage3D(GL_TEXTURE_3D, 0, GL_R8UI, textureSize, textureSize, textureSize,
-        // 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, cTexData.data()
-    // );
+    // Signals the whole texture to be updated.
+    markMaterialDirtyCell(0,0,0);
+    markMaterialDirtyCell(textureSize-1, textureSize-1, textureSize-1);
 }
 
 // Generate the vertex array, vertex buffer, and color buffer.
@@ -265,18 +265,6 @@ void Chunk::bindMesh()
         nullptr             // no initial data
     );
 
-
-
-    // glCreateTextures(GL_TEXTURE_3D, 1, &cTexID);
-    // glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    // glBindTexture(GL_TEXTURE_3D, cTexID);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    // int chunkSizeVoxels= cm.chunkSizeInts*32;
-    // glTextureStorage3D(cTexID, 1, GL_RGBA8, chunkSizeVoxels, chunkSizeVoxels, chunkSizeVoxels);
 }
 
 void Chunk::updateOccupancy(){
@@ -284,7 +272,7 @@ void Chunk::updateOccupancy(){
         chunkMod->applyToChunk(*this, cp);
     }
     modifierUpdateQueue.clear();
-    uploadDirtyMaterialRegion();
+    // uploadDirtyMaterialRegion();
 }
 
 void Chunk::updateMesh()
@@ -294,7 +282,7 @@ void Chunk::updateMesh()
     // 1 = binaryMeshing
     // 2 = binaryMeshing and greedy meshing (WIP)
     int updateType = 2;
-    int debugMode = 1; // 0 = off, 1 = on.
+    int debugMode = 0; // 0 = off, 1 = on.
     float start;
     if (debugMode == 1) start = glfwGetTime();
     
@@ -559,8 +547,6 @@ void Chunk::updateMesh()
     // std::cout << "eBuff Size:" << eBuff.size() << std::endl;
     // std::cout << "nBuff Size:" << nBuff.size() << std::endl;
     // std::cout << "vBuff Size:" << vBuff.size() << std::endl;
-    
-    // updateBuffer();
 
 }
 
@@ -603,14 +589,11 @@ void Chunk::drawMesh(const Program& prog)
 
     // COLOR TEXTURE
     GLuint colorTexUniform = prog.getUniform("matIDTex");
-    // assert(colorTexUniform != -1);
-    // glBindTextureUnit(0, cTexID); // bind to unit 0
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_3D, cTexID);
     glUniform1i(colorTexUniform, 0);
     // ELEMENT ARRAY
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, eBuffID);
-    
     
     // Draw mesh
     glDrawElements(GL_TRIANGLES, (int)eBuff.size(), GL_UNSIGNED_INT, (const void *)0);
@@ -694,12 +677,9 @@ void Chunk::updateBuffer(){
     // std::cout << "eBuff data: " << eBuff.size()*sizeof(unsigned int) << std::endl;
 
     if (materialDirty_){
+        // std::cout << "update Material Region" << std::endl;
         uploadDirtyMaterialRegion();
     }
-    // int textureSize = cm.chunkSizeInts*16;
-    // glTexImage3D(GL_TEXTURE_3D, 0, GL_R8UI, textureSize, textureSize, textureSize,
-    //     0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, cTexData.data()
-    // );
 
     if (bufferUpdateMethod == 2){
         // MORE ADVANCED AND FASTER

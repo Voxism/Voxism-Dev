@@ -82,19 +82,6 @@ glm::ivec3 ChunkManager::worldToLocalVoxel(const glm::ivec3 &voxel) const
     );
 }
 
-// std::shared_ptr<Chunk> ChunkManager::generateChunk(ChunkPos& chunkPos){
-//     std::shared_ptr<Chunk> newChunk = std::make_shared<Chunk>(*this, chunkPos);
-//     // std::cout << "binding" << std::endl;
-//     newChunk->bindMesh();
-//     // std::cout << "generating" << std::endl;
-//     newChunk->generate();
-//     // std::cout << "updating" << std::endl;
-//     // newChunk->updateMesh();
-//     bufferUpdateQueue.push_back(newChunk);
-//     // std::cout << "Return" << std::endl;
-//     return newChunk; 
-// }
-
 std::shared_ptr<Chunk> ChunkManager::getChunk(const ChunkPos &chunkPos) const
 {
     auto it = chunkMap.find(chunkPos);
@@ -109,6 +96,8 @@ void ChunkManager::queueOccupancyUpdate(const std::shared_ptr<Chunk> &chunk)
     if (!chunk || chunk->isOccupancyQueued()) {
         return;
     }
+    // Add chunk to the occupancy update queue thread pool.
+    // will update the texture and occupancy for meshupdate to work with.
     occupancyUpdatePool.enqueue(
         [this, chunk]{
             std::lock_guard<std::mutex> lock1(chunk->mutex);
@@ -118,8 +107,6 @@ void ChunkManager::queueOccupancyUpdate(const std::shared_ptr<Chunk> &chunk)
             queueMeshUpdate(chunk);
         }
     );
-
-    // occupancyUpdateQueue.push_back(chunk);
 }
 
 void ChunkManager::queueMeshUpdate(const std::shared_ptr<Chunk> &chunk)
@@ -127,20 +114,22 @@ void ChunkManager::queueMeshUpdate(const std::shared_ptr<Chunk> &chunk)
     if (!chunk || chunk->isMeshQueued()) {
         return;
     }
-    // std::lock_guard<std::mutex> lock1(chunk->mutex);
-    
+    // Add chunk the mesh update queue thread pool
+    // will generate the mesh for the chunk.
     meshUpdatePool.enqueue(
         [this, chunk]{
-            std::lock_guard<std::mutex> lock1(chunk->mutex);
-            chunk->setMeshQueued(true);
-            chunk->updateMesh();
-            chunk->setMeshQueued(false);
-            std::lock_guard<std::mutex> lock(bufferQueueMutex);
-            bufferUpdateQueue.push_back(chunk);
+            {
+                std::lock_guard<std::mutex> lock1(chunk->mutex);
+                chunk->setMeshQueued(true);
+                chunk->updateMesh();
+                chunk->setMeshQueued(false);
+            }
+            {
+                std::lock_guard<std::mutex> lock(bufferQueueMutex);
+                bufferUpdateQueue.push_back(chunk);
+            }
         }
     );
-
-    // meshUpdateQueue.push_back(chunk);
 }
 
 bool ChunkManager::isVoxelOccupied(const glm::ivec3 &voxel)
@@ -306,75 +295,13 @@ void ChunkManager::modifyChunks(const std::shared_ptr<IChunkModifier> &chunkMod)
                 }
                 chunk->queueModifier(chunkMod);
                 queueOccupancyUpdate(chunk);
-
-                // for (int axis = 0; axis < 3; ++axis) {
-                //     for (int dir = -1; dir <= 1; dir += 2) {
-                //         ChunkPos neighborPos = chunkPos;
-                //         if (axis == 0) {
-                //             neighborPos.x += dir;
-                //         } else if (axis == 1) {
-                //             neighborPos.y += dir;
-                //         } else {
-                //             neighborPos.z += dir;
-                //         }
-                //         auto neighbor = getChunk(neighborPos);
-                //         queueMeshUpdate(neighbor);
-                //     }
-                // }
             }
         }
     }
 };
 
+// Called by the main thread.
 void ChunkManager::updateChunks(){
-    // Update Occupancy.
-    // Current updates all but could be multithreaded and limited to N updates for performance.
-    // {
-    //     std::lock_guard<std::mutex> lock(occupancyQueueMutex);
-    //     if (!occupancyUpdateQueue.empty() && occupancyUpdateWorkers<maxOccupancyUpdateWorkers){
-    //         std::shared_ptr<Chunk> C = occupancyUpdateQueue.front();
-    //         occupancyUpdateWorkers++;
-    //         std::thread([this, C]() {
-    //             std::lock_guard<std::mutex> lock1(C->mutex);
-    //             C->updateOccupancy();
-    //             C->setOccupancyQueued(false);
-    //             // std::lock_guard<std::mutex> lock2(meshQueueMutex);
-    //             queueMeshUpdate(C);
-    //             occupancyUpdateWorkers--;
-    //         }).detach();
-    //         occupancyUpdateQueue.pop_front();
-    //     }
-    //     // std::shared_ptr<Chunk> C = occupancyUpdateQueue.front();
-    //     // C->updateOccupancy();
-    //     // C->setOccupancyQueued(false);
-    //     // occupancyUpdateQueue.pop_front();
-    //     // queueMeshUpdate(C);
-    // }
-
-    // Update Meshes
-    // {
-    //     std::lock_guard<std::mutex> lock(meshQueueMutex);
-    //     if (!meshUpdateQueue.empty() && meshUpdateWorkers<maxMeshUpdateWorkers){
-    //         std::shared_ptr<Chunk> C = meshUpdateQueue.front();
-    //         meshUpdateWorkers++;
-    //         std::thread([this, C]() {
-    //             std::lock_guard<std::mutex> lock1(C->mutex);
-    //             C->updateMesh();
-    //             C->setMeshQueued(false);
-    //             // std::lock_guard<std::mutex> lock2(bufferQueueMutex);
-    //             bufferUpdateQueue.push_back(C);
-    //             meshUpdateWorkers--;
-    //         }).detach();
-    //         meshUpdateQueue.pop_front();
-            
-    //         // std::shared_ptr<Chunk> C = meshUpdateQueue.front();
-    //         // C->updateMesh(); //also updates the buffers.
-    //         // C->setMeshQueued(false);
-    //         // meshUpdateQueue.pop_front();
-    //         // bufferUpdateQueue.push_back(C);
-    //     }
-    // }
-
     while (true){
         std::shared_ptr<Chunk> C;
         {
@@ -390,14 +317,6 @@ void ChunkManager::updateChunks(){
             std::unique_lock<std::mutex> lock(C->mutex);
             C->updateBuffer();
         }
-
-        // std::cout << "updating Buffer for chunk" << std::endl;
-        // std::shared_ptr<Chunk> C = bufferUpdateQueue.front();
-        // std::unique_lock<std::mutex> lock(C->mutex);
-        // if (lock.owns_lock()){
-            // C->updateBuffer();
-            // bufferUpdateQueue.pop_front();
-        // }
     }
 }
 
@@ -474,7 +393,7 @@ void ChunkManager::generateChunks(glm::vec3 center){
                         chunk->second->updateMesh();
                         chunk->second->setGenerated(true);
                         float totalTime = glfwGetTime()-startTime;
-                        std::cout << "ChunkGen (" << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << ") " << std::fixed << std::setprecision(4) << totalTime << "s" << std::endl;
+                        // std::cout << "ChunkGen (" << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << ") " << std::fixed << std::setprecision(4) << totalTime << "s" << std::endl;
                         bufferUpdateQueue.push_back(chunk->second);
                     }
                 }
