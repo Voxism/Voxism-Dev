@@ -979,7 +979,7 @@ public:
 		glUniform3fv(chunkProg_->getUniform("lightPos"), 1, value_ptr(sunWorld_));
 		glUniform3fv(chunkProg_->getUniform("camPos"), 1, value_ptr(eye));
 		glUniform3fv(chunkProg_->getUniform("lightColor"), 1, value_ptr(lightColor));
-		chunkManager->drawChunks(*chunkProg_);
+		chunkManager->drawChunks(*chunkProg_, fpvCamera, frameNumber++);
 		chunkProg_->unbind();
 
 		ToolPreview preview = toolManager_.getPreview(*chunkManager, eye, glm::normalize(camera->GetForward()), ToolMode::Build);
@@ -1197,6 +1197,7 @@ private:
 	64,// generationDistance (in meters)
 	32 // generationHeight (in meters)
 	);
+	unsigned long frameNumber = 0;
 
 	shared_ptr<Texture> collectibleTex_;
 	GLuint groundTexGl_ = 0;

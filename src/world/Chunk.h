@@ -23,6 +23,9 @@ class Chunk
 {
     public:
         std::mutex mutex;
+        bool negXOccluded = false, posXOccluded = false;
+        bool negYOccluded = false, posYOccluded = false; 
+        bool negZOccluded = false, posZOccluded = false;
         // METHODS GENERALLY CALLED ONCE PER CHUNK
         Chunk(ChunkManager& chunkManager, ChunkPos& cp); 
 
@@ -46,6 +49,8 @@ class Chunk
 
         // update OccupancyInts
         void updateChunk(float deltaTime, bool gridFill, bool floor, bool sphere);
+        bool updateFrameNumber(unsigned long frameNumber);
+        bool isEmpty();
 
         void queueModifier(const std::shared_ptr<IChunkModifier> &modifier);
         bool isOccupiedLocal(int x, int y, int z) const;
@@ -64,10 +69,12 @@ class Chunk
         void setGenerated(bool generated) { generated_ = generated; }
     
     private:
+        
         ChunkManager& cm;
         ChunkPos cp;
         glm::vec3 worldcp;
         std::deque<std::shared_ptr<IChunkModifier>> modifierUpdateQueue;
+        unsigned long frameNumber;
         bool occupancyQueued_ = false;
         bool meshQueued_ = false;
         bool materialDirty_ = false;

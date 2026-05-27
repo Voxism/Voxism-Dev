@@ -417,26 +417,71 @@ void ChunkManager::generateChunks(glm::vec3 center){
     }).detach();
 }
 
-void ChunkManager::drawChunks(const Program& prog){
+void ChunkManager::drawChunks(const Program& prog, const FirstPersonCamera &fpc, unsigned long frameNumber){
+    int numberOfDraws = 0;
+    glm::vec3 camPos = fpc.GetCameraPos();
+    ChunkPos cp = ChunkPos{
+    (int) glm::floor(camPos.x/chunkSizeMeters),
+    (int) glm::floor(camPos.y/chunkSizeMeters),
+    (int) glm::floor(camPos.z/chunkSizeMeters)
+    };
+    // std::cout<< "FrameNumber: " << frameNumber << std::endl;
+    // std::cout<< "ChunkPos Start: x=" << cp.x << " y=" << cp.y << " z=" << cp.z << std::endl;
     
-    for (int z = -renderDistance/chunkSizeMeters; z<renderDistance/chunkSizeMeters; z++){
-        for (int y = terrainMinChunks; y<=terrainMaxChunks; y++){
-            for (int x = -renderDistance/chunkSizeMeters; x<renderDistance/chunkSizeMeters; x++){
-                ChunkPos chunkPos = ChunkPos{x, y, z};
-                std::shared_ptr<Chunk> chunkPtr = nullptr;
+    std::function<void(ChunkPos)> drawChunk = [&](ChunkPos cp){
+        // Get the chunk
+        std::shared_ptr<Chunk> chunkPtr = nullptr;
+        {
+            std::lock_guard<std::mutex> lockMap(chunkMapMutex);
+            auto chunk = chunkMap.find(cp);
+            if (chunk != chunkMap.end()){
+                chunkPtr = chunk->second;
+            }
+        }
+        
+        if (chunkPtr != nullptr && chunkPtr->isGenerated()){
+            // checks if visited this frame.
+            bool differentFrame = chunkPtr->updateFrameNumber(frameNumber);
+
+            if (//chunk hasn't been rendered this frame
+                differentFrame && 
+                // Chunk is within render distance from FPVcamera
+                glm::pow(glm::pow(cp.x*chunkSizeMeters+0.5*chunkSizeMeters-camPos.x, 2) + glm::pow(cp.z*chunkSizeMeters+0.5*chunkSizeMeters-camPos.z, 2), 0.5) < renderDistance
+                // Chunk is within the View Frustum
+
+            ){
                 {
-                    std::lock_guard<std::mutex> lockMap(chunkMapMutex);
-                    auto chunk = chunkMap.find(chunkPos);
-                    if (chunk != chunkMap.end()){
-                        chunkPtr = chunk->second;
+                    std::lock_guard<std::mutex> lock(chunkPtr->mutex);
+                    if (!chunkPtr->isEmpty()) 
+                    {
+                        chunkPtr->drawMesh(prog);
+                        numberOfDraws++;
                     }
                 }
+                        
+                if (!chunkPtr->negXOccluded){drawChunk(ChunkPos{cp.x-1, cp.y, cp.z});}
+                if (!chunkPtr->posXOccluded){drawChunk(ChunkPos{cp.x+1, cp.y, cp.z});}
+                if (!chunkPtr->negYOccluded){drawChunk(ChunkPos{cp.x, cp.y-1, cp.z});}
+                if (!chunkPtr->posYOccluded){drawChunk(ChunkPos{cp.x, cp.y+1, cp.z});}
+                if (!chunkPtr->negZOccluded){drawChunk(ChunkPos{cp.x, cp.y, cp.z-1});}
+                if (!chunkPtr->posZOccluded){drawChunk(ChunkPos{cp.x, cp.y, cp.z+1});}
+            }
+        }
+    };
 
-                if (chunkPtr != nullptr && chunkPtr->isGenerated()){
-                    std::lock_guard<std::mutex> lock(chunkPtr->mutex);
-                    chunkPtr->drawMesh(prog);
-                }
+    // Try adjacent chunk positions as seeds in case the first one doesn't exist is it outside of frustum.
+    for (int x=-1; x<1; x++){
+        for (int y=-1; y<1; y++){
+            for (int z=-1; z<1; z++){
+                drawChunk(ChunkPos{cp.x+x, cp.y+y, cp.z+z});
             }
         }
     }
+
+    // render distance 32 and generation height 32.
+    // Without Culling:         416
+    // Culling empty Chunks:    261
+    // Culling Occluded Chunks:  82
+    // VFC:                     
+    std::cout << "Number of Draws: " << numberOfDraws << std::endl;
 }

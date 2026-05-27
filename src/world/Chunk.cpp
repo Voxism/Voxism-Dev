@@ -23,6 +23,24 @@ Chunk::Chunk(ChunkManager& cm, ChunkPos& cp):
     assert(bufferUpdateMethod >= 0 && bufferUpdateMethod <= 2);
 }
 
+// returns if framenumber was updated, updates only if there is a change.
+bool Chunk::updateFrameNumber(unsigned long frameNumber){
+    if (this->frameNumber != frameNumber){
+        this->frameNumber = frameNumber;
+        return true;
+    } else {
+        return false;
+    }
+}
+
+bool Chunk::isEmpty(){
+    if (eBuff.size() == 0){
+        return true;
+    } else {
+        return false;
+    }
+}
+
 void Chunk::queueModifier(const std::shared_ptr<IChunkModifier> &modifier)
 {
     modifierUpdateQueue.push_back(modifier);
@@ -420,6 +438,57 @@ void Chunk::updateMesh()
                 }
             }
         }
+
+        // get occlusion information
+        negXOccluded = true;
+        posXOccluded = true;
+        for (int z=0; z<cm.occupancyZsize; z++){
+        for (int y=0; y<cm.occupancyYsize; y++){
+            // negX occlusion
+            int occupancyIndex = z*yxOffset + y*cm.occupancyXsize;
+            uint32_t occupancyInt = occupancyInts[occupancyIndex];
+            if (!negXOccluded || (occupancyInt & 0b00000000000000000000000000000001) != 0b00000000000000000000000000000001){
+                negXOccluded = false;
+            }
+            // posX occlusion
+            occupancyInt = occupancyInts[occupancyIndex+(cm.occupancyXsize-1)];
+            if (!posXOccluded || (occupancyInt & 0b10000000000000000000000000000000) != 0b10000000000000000000000000000000){
+                posXOccluded = false;
+            }
+        }}
+
+        negYOccluded = true;
+        posYOccluded = true;
+        for (int z=0; z<cm.occupancyZsize; z++){
+        for (int x=0; x<cm.occupancyXsize; x++){
+            // Get occupancyInt
+            int occupancyIndex = z*yxOffset + x;
+            uint32_t occupancyInt = occupancyInts[occupancyIndex];
+            if (!negYOccluded || (occupancyInt & 0b11111111111111111111111111111111) != 0b11111111111111111111111111111111){
+                negYOccluded = false;
+            }
+            occupancyInt = occupancyInts[occupancyIndex+(cm.occupancyYsize-1)*cm.occupancyXsize];
+            if (!posYOccluded || (occupancyInt & 0b11111111111111111111111111111111) != 0b11111111111111111111111111111111){
+                posYOccluded = false;
+            }
+        }}
+
+        negZOccluded = true;
+        posZOccluded = true;
+        for (int y=0; y<cm.occupancyYsize; y++){
+        for (int x=0; x<cm.occupancyXsize; x++){
+            // Get occupancyInt
+            int occupancyIndex = y*cm.occupancyXsize + x;
+            uint32_t occupancyInt = occupancyInts[occupancyIndex];
+            if (!negZOccluded || (occupancyInt & 0b11111111111111111111111111111111) != 0b11111111111111111111111111111111){
+                negZOccluded = false;
+            }
+            occupancyInt = occupancyInts[occupancyIndex+(cm.occupancyZsize-1)*yxOffset];
+            if (!posZOccluded || (occupancyInt & 0b11111111111111111111111111111111) != 0b11111111111111111111111111111111){
+                posZOccluded = false;
+            }
+            
+        }}
         
         // Simple Quads
         if (updateType == 1){
