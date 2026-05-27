@@ -1,5 +1,6 @@
 #include "ChunkManager.h"
 
+#include <chrono>
 #include <cmath>
 #include <limits>
 
@@ -9,15 +10,22 @@ ChunkManager::ChunkManager(
     int voxPerMeter,
     float chunkSizeMeters,
     int renderDistance, 
-    int renderHeight):
+    int renderHeight,
+    int generationDistance,
+    int generationHeight):
     voxPerMeter(voxPerMeter), 
     chunkSizeMeters(chunkSizeMeters),
     renderDistance(renderDistance),
     renderHeight(renderHeight),
+    generationDistance(generationDistance),
+    generationHeight(generationHeight),
     terrainMinChunks(0),
     terrainMaxChunks(0),
     occupancyUpdateQueue(),
-    meshUpdateQueue()
+    meshUpdateQueue(),
+    occupancyUpdatePool(4),
+    meshUpdatePool(4),
+    bufferUpdatePool(4)
 {
     // Calculations for voxel and chunk sizes
     voxSizeMeters = 1.0f/voxPerMeter; // in meters.
@@ -75,20 +83,9 @@ glm::ivec3 ChunkManager::worldToLocalVoxel(const glm::ivec3 &voxel) const
     );
 }
 
-std::shared_ptr<Chunk> ChunkManager::generateChunk(ChunkPos& chunkPos){
-    std::shared_ptr<Chunk> newChunk = std::make_shared<Chunk>(*this, chunkPos);
-    // std::cout << "binding" << std::endl;
-    newChunk->bindMesh();
-    // std::cout << "generating" << std::endl;
-    newChunk->generate();
-    // std::cout << "updating" << std::endl;
-    newChunk->updateMesh();
-    // std::cout << "Return" << std::endl;
-    return newChunk; 
-}
-
 std::shared_ptr<Chunk> ChunkManager::getChunk(const ChunkPos &chunkPos) const
 {
+    std::lock_guard<std::mutex> lockMap(chunkMapMutex);
     auto it = chunkMap.find(chunkPos);
     if (it != chunkMap.end()) {
         return it->second;
@@ -98,20 +95,57 @@ std::shared_ptr<Chunk> ChunkManager::getChunk(const ChunkPos &chunkPos) const
 
 void ChunkManager::queueOccupancyUpdate(const std::shared_ptr<Chunk> &chunk)
 {
-    if (!chunk || chunk->isOccupancyQueued()) {
+    if (!chunk) {
         return;
     }
-    chunk->setOccupancyQueued(true);
-    occupancyUpdateQueue.push_back(chunk);
+
+    {
+        std::lock_guard<std::mutex> lock(chunk->mutex);
+        if (chunk->isOccupancyQueued()) {
+            return;
+        }
+        chunk->setOccupancyQueued(true);
+    }
+
+    occupancyUpdatePool.enqueue(
+        [this, chunk]{
+            {
+                std::lock_guard<std::mutex> lock1(chunk->mutex);
+                chunk->updateOccupancy();
+                chunk->setOccupancyQueued(false);
+            }
+            queueMeshUpdate(chunk);
+        }
+    );
 }
 
 void ChunkManager::queueMeshUpdate(const std::shared_ptr<Chunk> &chunk)
 {
-    if (!chunk || chunk->isMeshQueued()) {
+    if (!chunk) {
         return;
     }
-    chunk->setMeshQueued(true);
-    meshUpdateQueue.push_back(chunk);
+
+    {
+        std::lock_guard<std::mutex> lock(chunk->mutex);
+        if (chunk->isMeshQueued()) {
+            return;
+        }
+        chunk->setMeshQueued(true);
+    }
+
+    meshUpdatePool.enqueue(
+        [this, chunk]{
+            {
+                std::lock_guard<std::mutex> lock1(chunk->mutex);
+                chunk->updateMesh();
+                chunk->setMeshQueued(false);
+            }
+            {
+                std::lock_guard<std::mutex> lock(bufferQueueMutex);
+                bufferUpdateQueue.push_back(chunk);
+            }
+        }
+    );
 }
 
 bool ChunkManager::isVoxelOccupied(const glm::ivec3 &voxel)
@@ -275,64 +309,203 @@ void ChunkManager::modifyChunks(const std::shared_ptr<IChunkModifier> &chunkMod)
                 if (!chunk) {
                     continue;
                 }
-                chunk->queueModifier(chunkMod);
-                queueOccupancyUpdate(chunk);
-
-                for (int axis = 0; axis < 3; ++axis) {
-                    for (int dir = -1; dir <= 1; dir += 2) {
-                        ChunkPos neighborPos = chunkPos;
-                        if (axis == 0) {
-                            neighborPos.x += dir;
-                        } else if (axis == 1) {
-                            neighborPos.y += dir;
-                        } else {
-                            neighborPos.z += dir;
-                        }
-                        auto neighbor = getChunk(neighborPos);
-                        queueMeshUpdate(neighbor);
+                {
+                    std::lock_guard<std::mutex> lock(chunk->mutex);
+                    if (!chunk->isGenerated()) {
+                        continue;
                     }
                 }
+                chunk->queueModifier(chunkMod);
+                queueOccupancyUpdate(chunk);
             }
         }
     }
 };
 
+// Called by the main thread.
 void ChunkManager::updateChunks(){
-    // Update Occupancy.
-    // Current updates all but could be multithreaded and limited to N updates for performance.
-    if (!occupancyUpdateQueue.empty()){
-        std::shared_ptr<Chunk> C = occupancyUpdateQueue.front();
-        C->updateOccupancy();
-        C->setOccupancyQueued(false);
-        occupancyUpdateQueue.pop_front();
-        queueMeshUpdate(C);
-    }
+    while (true){
+        std::shared_ptr<Chunk> C;
+        {
+            std::lock_guard<std::mutex> lock(bufferQueueMutex);
+            if (bufferUpdateQueue.empty()){
+                break;
+            }
+            C = bufferUpdateQueue.front();
+            bufferUpdateQueue.pop_front();
+        }
 
-    // Update Meshes
-    if (!meshUpdateQueue.empty()){
-        std::shared_ptr<Chunk> C = meshUpdateQueue.front();
-        C->updateMesh(); //also updates the buffers.
-        C->setMeshQueued(false);
-        meshUpdateQueue.pop_front();
+        {
+            std::unique_lock<std::mutex> lock(C->mutex);
+            C->updateBuffer();
+            C->setGenerated(true);
+        }
     }
 }
 
-void ChunkManager::drawChunks(const Program& prog){
+template<typename Func>
+void ChunkManager::forEachChunkInGenerationDistance(glm::vec3 center, Func func){
+    int x = center.x/chunkSizeMeters;
+    int z = center.z/chunkSizeMeters;
+
+    // checks each chunk in a vertical slice. if it doesn't exist then generate it.
+    auto forSlice = [&](int x, int z, auto func){
+        int height = generationHeight/chunkSizeMeters; 
+        for (int y=-height; y<height; y++){
+            ChunkPos chunkPos = ChunkPos{x, y, z};
+            func(chunkPos);
+        }
+    };
     
-    for (int z = -renderDistance/chunkSizeMeters; z<renderDistance/chunkSizeMeters; z++){
-        for (int y = terrainMinChunks; y<=terrainMaxChunks; y++){
-            for (int x = -renderDistance/chunkSizeMeters; x<renderDistance/chunkSizeMeters; x++){
-                ChunkPos chunkPos = ChunkPos{x, y, z};
-                auto chunk = chunkMap.find(chunkPos);
-                if (chunk == chunkMap.end()){
-                    
-                    float startTime = glfwGetTime();
-                    chunkMap[chunkPos] = generateChunk(chunkPos);
-                    float totalTime = glfwGetTime()-startTime;
-                    std::cout << "ChunkGen (" << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << ") " << std::fixed << std::setprecision(4) << totalTime << "s" << std::endl;
+    // Attempt to generate the current chunk.
+    forSlice(x, z, func);
+    // Generate chunks in concentric rings around the player.
+    int maxDistance = generationDistance/chunkSizeInts;
+    for (int distance = 1; distance < maxDistance; distance++){
+        int dx = -distance;
+        int dz = -distance;
+        // -z wall
+        while(dx<distance){
+            dx++;
+            forSlice(x+dx, z+dz, func);
+        }
+        // +x wall
+        while(dz<distance){
+            dz++;
+            forSlice(x+dx, z+dz, func);
+        }
+        // +Z wall
+        while(dx>-distance){
+            dx--;
+            forSlice(x+dx, z+dz, func);
+        }
+        // -x wall
+        while(dz>-distance){
+            dz--;
+            forSlice(x+dx, z+dz, func);
+        }
+    }
+}
+
+void ChunkManager::generateChunks(glm::vec3 center){
+    // Create Chunks and Bind Chunks (main Thread)
+    forEachChunkInGenerationDistance(
+        center, 
+        [&](ChunkPos chunkPos){
+            std::lock_guard<std::mutex> lockMap(chunkMapMutex);
+            auto chunk = chunkMap.find(chunkPos);
+            if (chunk == chunkMap.end())
+            {
+                // Make, bind, insert.
+                std::shared_ptr<Chunk> newChunk = std::make_shared<Chunk>(*this, chunkPos);
+                std::lock_guard<std::mutex> lock(newChunk->mutex);
+                newChunk->bindMesh();
+                chunkMap[chunkPos] = newChunk;
+            }
+        }
+    );
+    // generate Chunks and add to bufferUpdateQueue (worker thread)
+    std::thread([&, center]() {
+        forEachChunkInGenerationDistance(
+            center, 
+            [&](ChunkPos chunkPos)
+            {
+                std::shared_ptr<Chunk> chunkPtr = nullptr;
+                {
+                    std::lock_guard<std::mutex> lockMap(chunkMapMutex);
+                    auto chunk = chunkMap.find(chunkPos);
+                    if (chunk != chunkMap.end()){
+                        chunkPtr = chunk->second;
+                    }
                 }
-                chunkMap[chunkPos]->drawMesh(prog);
+                if (chunkPtr != nullptr && !chunkPtr->isGenerated())
+                {
+                    {
+                        std::lock_guard<std::mutex> lock(chunkPtr->mutex);
+                        const auto startTime = std::chrono::steady_clock::now();
+                        chunkPtr->generate();
+                        chunkPtr->updateMesh();
+                        const float totalTime = std::chrono::duration<float>(
+                            std::chrono::steady_clock::now() - startTime).count();
+                        (void)totalTime;
+                        // std::cout << "ChunkGen (" << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << ") " << std::fixed << std::setprecision(4) << totalTime << "s" << std::endl;
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(bufferQueueMutex);
+                        bufferUpdateQueue.push_back(chunkPtr);
+                    }
+                }
+            }
+        );
+    }).detach();
+}
+
+void ChunkManager::drawChunks(const Program& prog, const FirstPersonCamera &fpc, const Frustum& frustum, unsigned long frameNumber){
+    int numberOfDraws = 0;
+    glm::vec3 camPos = fpc.GetCameraPos();
+    ChunkPos cp = ChunkPos{
+    (int) glm::floor(camPos.x/chunkSizeMeters),
+    (int) glm::floor(camPos.y/chunkSizeMeters),
+    (int) glm::floor(camPos.z/chunkSizeMeters)
+    };
+    // std::cout<< "FrameNumber: " << frameNumber << std::endl;
+    // std::cout<< "ChunkPos Start: x=" << cp.x << " y=" << cp.y << " z=" << cp.z << std::endl;
+    
+    std::function<void(ChunkPos)> drawChunk = [&](ChunkPos cp){
+        // Get the chunk
+        std::shared_ptr<Chunk> chunkPtr = nullptr;
+        {
+            std::lock_guard<std::mutex> lockMap(chunkMapMutex);
+            auto chunk = chunkMap.find(cp);
+            if (chunk != chunkMap.end()){
+                chunkPtr = chunk->second;
+            }
+        }
+        
+        if (chunkPtr != nullptr && chunkPtr->isGenerated()){
+            // checks if visited this frame.
+            bool differentFrame = chunkPtr->updateFrameNumber(frameNumber);
+
+            if (//chunk hasn't been rendered this frame
+                differentFrame && 
+                // Chunk is within render distance from FPVcamera
+                glm::pow(glm::pow(cp.x*chunkSizeMeters+0.5*chunkSizeMeters-camPos.x, 2) + glm::pow(cp.z*chunkSizeMeters+0.5*chunkSizeMeters-camPos.z, 2), 0.5) < renderDistance &&
+                // Chunk is within the View Frustum
+                !frustum.cullCube(glm::vec3(cp.x*chunkSizeMeters, cp.y*chunkSizeMeters, cp.z*chunkSizeMeters), glm::vec3((cp.x+1)*chunkSizeMeters, (cp.y+1)*chunkSizeMeters, (cp.z+1)*chunkSizeMeters))
+
+            ){
+                {
+                    std::lock_guard<std::mutex> lock(chunkPtr->mutex);
+                    if (!chunkPtr->isEmpty()) 
+                    {
+                        chunkPtr->drawMesh(prog);
+                        numberOfDraws++;
+                    }
+                }
+                        
+                if (!chunkPtr->negXOccluded){drawChunk(ChunkPos{cp.x-1, cp.y, cp.z});}
+                if (!chunkPtr->posXOccluded){drawChunk(ChunkPos{cp.x+1, cp.y, cp.z});}
+                if (!chunkPtr->negYOccluded){drawChunk(ChunkPos{cp.x, cp.y-1, cp.z});}
+                if (!chunkPtr->posYOccluded){drawChunk(ChunkPos{cp.x, cp.y+1, cp.z});}
+                if (!chunkPtr->negZOccluded){drawChunk(ChunkPos{cp.x, cp.y, cp.z-1});}
+                if (!chunkPtr->posZOccluded){drawChunk(ChunkPos{cp.x, cp.y, cp.z+1});}
+            }
+        }
+    };
+
+    // Try adjacent chunk positions as seeds in case the first one doesn't exist is it outside of frustum.
+    for (int x=-1; x<1; x++){
+        for (int y=-1; y<1; y++){
+            for (int z=-1; z<1; z++){
+                drawChunk(ChunkPos{cp.x+x, cp.y+y, cp.z+z});
             }
         }
     }
+
+    // render distance 32 and generation height 32.
+    // Without Culling:         416
+    // Culling empty Chunks:    261
+    // Culling Occluded Chunks:  82
+    // VFC:                     
+    std::cout << "Number of Draws: " << numberOfDraws << std::endl;
 }
