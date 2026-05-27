@@ -19,7 +19,7 @@ ToolPreview CubeTool::computePreview(const ToolRaycastHit &hit, ToolMode mode) c
     glm::ivec3 minVoxel(0);
     glm::ivec3 maxVoxel(0);
 
-    for (int axis = 0; axis < 3; ++axis) {
+    for (int axis = 0; axis < 3; axis++) {
         const int snapped = snapDownToGrid(anchor[axis], size);
         if (extrude[axis] > 0) {
             minVoxel[axis] = snapped;

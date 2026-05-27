@@ -100,7 +100,7 @@ private:
 
     // smooth visual rise for auto-step
     float step_up_visual_offset = 0.0f;
-    float step_up_lerp_speed = 8.0f;
+    float step_up_lerp_speed = 16.0f;
 
     // roll on strafe
     float roll_target = 0.0f;
@@ -120,8 +120,6 @@ private:
     bool TryStepUpAxisMove(int axis, float delta);
     void NudgeOutOfCollision();
     bool CanAttemptStepUp(int axis, float delta) const;
-    bool FindStepDestination(int axis, float delta, float probe_step, float max_step_height, glm::vec3 &settled_pos) const;
-    glm::vec3 SettleStepDown(glm::vec3 stepped_pos, float lift, float probe_step) const;
     float ResolveCollidingStep(int axis, float step) const;
     void ApplyKeyboardLook();
     void UpdateAirbornePeak();

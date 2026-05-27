@@ -181,16 +181,12 @@ void FirstPersonCamera::ApplyMovement(MoveIntent &move, float dt)
         ApplyChunkMovement(move, dt);
         return;
     }
-
-    ApplyFallbackMovement(move, dt);
 }
 
 void FirstPersonCamera::ApplyChunkMovement(MoveIntent &move, float dt)
 {
     move.delta.y = vertical_velocity * dt;
 
-    // Vertical motion is resolved first so ground hits can zero the fall speed
-    // before lateral movement attempts to auto-step.
     is_grounded = false;
     const bool hit_y = ResolveAxisMove(1, move.delta.y);
     if (hit_y) {
@@ -202,37 +198,6 @@ void FirstPersonCamera::ApplyChunkMovement(MoveIntent &move, float dt)
 
     ResolveAxisMove(0, move.delta.x);
     ResolveAxisMove(2, move.delta.z);
-
-    if (!is_grounded && vertical_velocity <= 0.0f) {
-        is_grounded = ProbeGrounded();
-    }
-}
-
-void FirstPersonCamera::ApplyFallbackMovement(const MoveIntent &move, float dt)
-{
-    player_pos += move.delta;
-    player_pos.y += vertical_velocity * dt;
-
-    if (player_pos.y <= floor_height + height) {
-        player_pos.y = floor_height + height;
-        vertical_velocity = 0.0f;
-        is_grounded = true;
-    } else {
-        is_grounded = false;
-    }
-}
-
-void FirstPersonCamera::ResolvePostMoveCollision()
-{
-    if (!chunk_manager_ || !CollidesAt(player_pos)) {
-        return;
-    }
-
-    NudgeOutOfCollision();
-    is_grounded = ProbeGrounded();
-    if (is_grounded && vertical_velocity < 0.0f) {
-        vertical_velocity = 0.0f;
-    }
 }
 
 void FirstPersonCamera::UpdateBobbing(float dt, bool is_moving)
@@ -247,7 +212,6 @@ void FirstPersonCamera::UpdateBobbing(float dt, bool is_moving)
 
 glm::vec3 FirstPersonCamera::ComputeBobOffset() const
 {
-    // Bobbing is visual-only; collision and physics stay anchored to player_pos.
     glm::vec3 bob_offset(0.0f);
     bob_offset.y = std::abs(sin(bob_time)) * bob_amount_y * bob_weight;
     bob_offset.x = sin(bob_time * 0.5f) * bob_amount_x * bob_weight;
@@ -267,8 +231,8 @@ void FirstPersonCamera::UpdateLandingDip(float dt)
         airborne_peak_y = player_pos.y;
     }
 
-    landing_velocity += (0.0f - landing_offset) * landing_spring_strength * dt;
-    landing_velocity -= landing_velocity * landing_recover_speed * dt;
+    landing_velocity += (0.0f - landing_offset) * landing_spring_strength * dt; //spring x'=-kx
+    landing_velocity -= landing_velocity * landing_recover_speed * dt; //dampener
     landing_offset += landing_velocity * dt;
 }
 
@@ -324,7 +288,6 @@ void FirstPersonCamera::UpdateCamera(float dt) {
     UpdateFovAndRoll(dt, move.moving_forward, move.moving_backward);
     UpdateJumpAndVerticalVelocity(dt);
     ApplyMovement(move, dt);
-    ResolvePostMoveCollision();
     UpdateBobbing(dt, move.is_moving);
     UpdateCameraPose(dt);
 }
@@ -353,7 +316,7 @@ bool FirstPersonCamera::CollidesAt(glm::vec3 eye_pos) const
         eye_pos.z - player_half_width);
     const glm::vec3 aabb_max(
         eye_pos.x + player_half_width,
-        eye_pos.y - kCollisionEpsilon,
+        eye_pos.y,
         eye_pos.z + player_half_width);
 
     const glm::ivec3 min_voxel = chunk_manager_->worldToVoxel(aabb_min);
@@ -428,52 +391,6 @@ bool FirstPersonCamera::CanAttemptStepUp(int axis, float delta) const
     return is_grounded || ProbeGrounded();
 }
 
-glm::vec3 FirstPersonCamera::SettleStepDown(glm::vec3 stepped_pos, float lift, float probe_step) const
-{
-    glm::vec3 settled = stepped_pos;
-    float drop = 0.0f;
-
-    // Drop back down to the top of the stepped surface after clearing the ledge.
-    while (drop + probe_step <= lift + kCollisionEpsilon) {
-        glm::vec3 probe = settled;
-        probe.y -= probe_step;
-        if (CollidesAt(probe)) {
-            break;
-        }
-        settled = probe;
-        drop += probe_step;
-    }
-
-    return settled;
-}
-
-bool FirstPersonCamera::FindStepDestination(
-    int axis,
-    float delta,
-    float probe_step,
-    float max_step_height,
-    glm::vec3 &settled_pos) const
-{
-    for (float lift = probe_step; lift <= max_step_height + kCollisionEpsilon; lift += probe_step) {
-        glm::vec3 lifted = player_pos;
-        lifted.y += lift;
-        if (CollidesAt(lifted)) {
-            continue;
-        }
-
-        glm::vec3 stepped = lifted;
-        stepped[axis] += delta;
-        if (CollidesAt(stepped)) {
-            continue;
-        }
-
-        settled_pos = SettleStepDown(stepped, lift, probe_step);
-        return true;
-    }
-
-    return false;
-}
-
 bool FirstPersonCamera::TryStepUpAxisMove(int axis, float delta)
 {
     if (!CanAttemptStepUp(axis, delta)) {
@@ -481,30 +398,28 @@ bool FirstPersonCamera::TryStepUpAxisMove(int axis, float delta)
     }
 
     const float max_step_height = chunk_manager_->voxSizeMeters * 2.0f;
-    const float probe_step = std::max(0.01f, chunk_manager_->voxSizeMeters * 0.25f);
-    glm::vec3 settled_pos(0.0f);
-    if (!FindStepDestination(axis, delta, probe_step, max_step_height, settled_pos)) {
+    glm::vec3 lifted = player_pos;
+    lifted.y += max_step_height;
+    if (CollidesAt(lifted)) {
+        return false;
+    }
+
+    glm::vec3 stepped = lifted;
+    stepped[axis] += delta;
+    if (CollidesAt(stepped)) {
         return false;
     }
 
     const float previous_visible_y = player_pos.y + step_up_visual_offset;
-    player_pos = settled_pos;
+    player_pos = stepped;
     if (player_pos.y > previous_visible_y) {
         step_up_visual_offset = previous_visible_y - player_pos.y;
-    }
-    is_grounded = true;
-    if (vertical_velocity < 0.0f) {
-        vertical_velocity = 0.0f;
     }
     return true;
 }
 
 bool FirstPersonCamera::ProbeGrounded() const
 {
-    if (!chunk_manager_) {
-        return player_pos.y <= floor_height + height + 0.001f;
-    }
-
     const float probe_distance = std::max(0.01f, chunk_manager_->voxSizeMeters * 0.5f);
     glm::vec3 probe_pos = player_pos;
     probe_pos.y -= probe_distance;

@@ -179,6 +179,7 @@ bool ChunkManager::isAnyVoxelOccupied(const glm::ivec3 &minVoxel, const glm::ive
     return false;
 }
 
+// DDA traversal http://www.cse.yorku.ca/~amana/research/grid.pdf
 bool ChunkManager::raycastVoxels(const glm::vec3 &origin,
     const glm::vec3 &direction,
     float maxDistance,
@@ -200,9 +201,9 @@ bool ChunkManager::raycastVoxels(const glm::vec3 &origin,
 
     for (int axis = 0; axis < 3; axis++) {
         if (rayDir[axis] > 0.0f) {
-            step[axis] = 1;
-            tMax[axis] = ((static_cast<float>(voxel[axis] + 1) - voxelPos[axis]) / rayDir[axis]) * voxSizeMeters;
-            tDelta[axis] = (1.0f / rayDir[axis]) * voxSizeMeters;
+            step[axis] = 1; // direction
+            tMax[axis] = ((static_cast<float>(voxel[axis] + 1) - voxelPos[axis]) / rayDir[axis]) * voxSizeMeters; // distance to first voxel boundary
+            tDelta[axis] = (1.0f / rayDir[axis]) * voxSizeMeters; // distance between voxels
         } else if (rayDir[axis] < 0.0f) {
             step[axis] = -1;
             tMax[axis] = ((voxelPos[axis] - static_cast<float>(voxel[axis])) / -rayDir[axis]) * voxSizeMeters;
@@ -218,7 +219,7 @@ bool ChunkManager::raycastVoxels(const glm::vec3 &origin,
     float traveled = 0.0f;
     const int maxSteps = static_cast<int>(glm::ceil(maxDistance / voxSizeMeters)) + 2;
 
-    for (int stepIndex = 0; stepIndex < maxSteps; ++stepIndex) {
+    for (int stepIndex = 0; stepIndex < maxSteps; stepIndex++) {
         if (isVoxelOccupied(voxel)) {
             outHit.hit = true;
             outHit.voxel = voxel;
@@ -278,20 +279,20 @@ void ChunkManager::modifyChunks(const std::shared_ptr<IChunkModifier> &chunkMod)
                 chunk->queueModifier(chunkMod);
                 queueOccupancyUpdate(chunk);
 
-                for (int axis = 0; axis < 3; ++axis) {
-                    for (int dir = -1; dir <= 1; dir += 2) {
-                        ChunkPos neighborPos = chunkPos;
-                        if (axis == 0) {
-                            neighborPos.x += dir;
-                        } else if (axis == 1) {
-                            neighborPos.y += dir;
-                        } else {
-                            neighborPos.z += dir;
-                        }
-                        auto neighbor = getChunk(neighborPos);
-                        queueMeshUpdate(neighbor);
-                    }
-                }
+                // for (int axis = 0; axis < 3; axis++) {
+                //     for (int dir = -1; dir <= 1; dir += 2) {
+                //         ChunkPos neighborPos = chunkPos;
+                //         if (axis == 0) {
+                //             neighborPos.x += dir;
+                //         } else if (axis == 1) {
+                //             neighborPos.y += dir;
+                //         } else {
+                //             neighborPos.z += dir;
+                //         }
+                //         auto neighbor = getChunk(neighborPos);
+                //         // queueMeshUpdate(neighbor);
+                //     }
+                // }
             }
         }
     }
