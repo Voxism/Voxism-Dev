@@ -37,6 +37,7 @@
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_glfw.h>
+#include "camera/Frustum.h"
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader/tiny_obj_loader.h>
@@ -967,6 +968,8 @@ public:
 	{
 		vec3 eye = camera->GetCameraPos();
 		mat4 Vsky = glm::mat4(glm::mat3(V));
+		// Frustum frustum = Frustum(P, V);
+		Frustum frustum = Frustum(P, fpvCamera.GetViewMatrix()); 
 
 		vec3 lightColor(1.0f, 0.98f, 0.92f);
 
@@ -979,7 +982,7 @@ public:
 		glUniform3fv(chunkProg_->getUniform("lightPos"), 1, value_ptr(sunWorld_));
 		glUniform3fv(chunkProg_->getUniform("camPos"), 1, value_ptr(eye));
 		glUniform3fv(chunkProg_->getUniform("lightColor"), 1, value_ptr(lightColor));
-		chunkManager->drawChunks(*chunkProg_, fpvCamera, frameNumber++);
+		chunkManager->drawChunks(*chunkProg_, fpvCamera, frustum, frameNumber++);
 		chunkProg_->unbind();
 
 		ToolPreview preview = toolManager_.getPreview(*chunkManager, eye, glm::normalize(camera->GetForward()), ToolMode::Build);
@@ -1191,10 +1194,10 @@ private:
 	shared_ptr<Materials> materials = make_shared<Materials>();
 	shared_ptr<ChunkManager> chunkManager = make_shared<ChunkManager>(
 	16,// voxPerMeter 
-	8,// chunkSizeMeters
+	4,// chunkSizeMeters
 	32,// renderDistance (in meters)
 	16,// renderHeight (int meters)
-	64,// generationDistance (in meters)
+	32,// generationDistance (in meters)
 	32 // generationHeight (in meters)
 	);
 	unsigned long frameNumber = 0;

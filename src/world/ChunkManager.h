@@ -16,6 +16,7 @@
 #include "../threads/ThreadPool.h"
 #include <shared_mutex>
 #include <../camera/FirstPersonCamera.h>
+#include <../camera/Frustum.h>
 
 class ChunkManager {
     public:
@@ -72,7 +73,7 @@ class ChunkManager {
 
         // Determines what chunks should be drawn and then
         // binds the chunk data and draws it.
-        void drawChunks(const Program& prog, const FirstPersonCamera& fpc, unsigned long frameNumber);
+        void drawChunks(const Program& prog, const FirstPersonCamera& fpc, const Frustum& frustum, unsigned long frameNumber);
        
     private:
         // Stuct necessary for mapping an xyz of the chunk to the chunk.

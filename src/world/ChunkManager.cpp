@@ -338,7 +338,7 @@ void ChunkManager::forEachChunkInGenerationDistance(glm::vec3 center, Func func)
     // Attempt to generate the current chunk.
     forSlice(x, z, func);
     // Generate chunks in concentric rings around the player.
-    int maxDistance = renderDistance/chunkSizeInts;
+    int maxDistance = generationDistance/chunkSizeInts;
     for (int distance = 1; distance < maxDistance; distance++){
         int dx = -distance;
         int dz = -distance;
@@ -417,7 +417,7 @@ void ChunkManager::generateChunks(glm::vec3 center){
     }).detach();
 }
 
-void ChunkManager::drawChunks(const Program& prog, const FirstPersonCamera &fpc, unsigned long frameNumber){
+void ChunkManager::drawChunks(const Program& prog, const FirstPersonCamera &fpc, const Frustum& frustum, unsigned long frameNumber){
     int numberOfDraws = 0;
     glm::vec3 camPos = fpc.GetCameraPos();
     ChunkPos cp = ChunkPos{
@@ -446,8 +446,9 @@ void ChunkManager::drawChunks(const Program& prog, const FirstPersonCamera &fpc,
             if (//chunk hasn't been rendered this frame
                 differentFrame && 
                 // Chunk is within render distance from FPVcamera
-                glm::pow(glm::pow(cp.x*chunkSizeMeters+0.5*chunkSizeMeters-camPos.x, 2) + glm::pow(cp.z*chunkSizeMeters+0.5*chunkSizeMeters-camPos.z, 2), 0.5) < renderDistance
+                glm::pow(glm::pow(cp.x*chunkSizeMeters+0.5*chunkSizeMeters-camPos.x, 2) + glm::pow(cp.z*chunkSizeMeters+0.5*chunkSizeMeters-camPos.z, 2), 0.5) < renderDistance &&
                 // Chunk is within the View Frustum
+                !frustum.cullCube(glm::vec3(cp.x*chunkSizeMeters, cp.y*chunkSizeMeters, cp.z*chunkSizeMeters), glm::vec3((cp.x+1)*chunkSizeMeters, (cp.y+1)*chunkSizeMeters, (cp.z+1)*chunkSizeMeters))
 
             ){
                 {
