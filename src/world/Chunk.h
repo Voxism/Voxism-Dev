@@ -15,12 +15,14 @@
 #include <deque>
 #include <memory>
 #include "modifiers/IChunkModifier.h"
+#include <mutex>
 
 class ChunkManager;
 
 class Chunk
 {
     public:
+        std::mutex mutex;
         // METHODS GENERALLY CALLED ONCE PER CHUNK
         Chunk(ChunkManager& chunkManager, ChunkPos& cp); 
 

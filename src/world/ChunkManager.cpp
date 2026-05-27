@@ -21,7 +21,10 @@ ChunkManager::ChunkManager(
     terrainMinChunks(0),
     terrainMaxChunks(0),
     occupancyUpdateQueue(),
-    meshUpdateQueue()
+    meshUpdateQueue(),
+    occupancyUpdatePool(4),
+    meshUpdatePool(4),
+    bufferUpdatePool(4)
 {
     // Calculations for voxel and chunk sizes
     voxSizeMeters = 1.0f/voxPerMeter; // in meters.
@@ -106,8 +109,17 @@ void ChunkManager::queueOccupancyUpdate(const std::shared_ptr<Chunk> &chunk)
     if (!chunk || chunk->isOccupancyQueued()) {
         return;
     }
-    chunk->setOccupancyQueued(true);
-    occupancyUpdateQueue.push_back(chunk);
+    occupancyUpdatePool.enqueue(
+        [this, chunk]{
+            std::lock_guard<std::mutex> lock1(chunk->mutex);
+            chunk->setOccupancyQueued(true);
+            chunk->updateOccupancy();
+            chunk->setOccupancyQueued(false);
+            queueMeshUpdate(chunk);
+        }
+    );
+
+    // occupancyUpdateQueue.push_back(chunk);
 }
 
 void ChunkManager::queueMeshUpdate(const std::shared_ptr<Chunk> &chunk)
@@ -115,8 +127,20 @@ void ChunkManager::queueMeshUpdate(const std::shared_ptr<Chunk> &chunk)
     if (!chunk || chunk->isMeshQueued()) {
         return;
     }
-    chunk->setMeshQueued(true);
-    meshUpdateQueue.push_back(chunk);
+    // std::lock_guard<std::mutex> lock1(chunk->mutex);
+    
+    meshUpdatePool.enqueue(
+        [this, chunk]{
+            std::lock_guard<std::mutex> lock1(chunk->mutex);
+            chunk->setMeshQueued(true);
+            chunk->updateMesh();
+            chunk->setMeshQueued(false);
+            std::lock_guard<std::mutex> lock(bufferQueueMutex);
+            bufferUpdateQueue.push_back(chunk);
+        }
+    );
+
+    // meshUpdateQueue.push_back(chunk);
 }
 
 bool ChunkManager::isVoxelOccupied(const glm::ivec3 &voxel)
@@ -283,20 +307,20 @@ void ChunkManager::modifyChunks(const std::shared_ptr<IChunkModifier> &chunkMod)
                 chunk->queueModifier(chunkMod);
                 queueOccupancyUpdate(chunk);
 
-                for (int axis = 0; axis < 3; ++axis) {
-                    for (int dir = -1; dir <= 1; dir += 2) {
-                        ChunkPos neighborPos = chunkPos;
-                        if (axis == 0) {
-                            neighborPos.x += dir;
-                        } else if (axis == 1) {
-                            neighborPos.y += dir;
-                        } else {
-                            neighborPos.z += dir;
-                        }
-                        auto neighbor = getChunk(neighborPos);
-                        queueMeshUpdate(neighbor);
-                    }
-                }
+                // for (int axis = 0; axis < 3; ++axis) {
+                //     for (int dir = -1; dir <= 1; dir += 2) {
+                //         ChunkPos neighborPos = chunkPos;
+                //         if (axis == 0) {
+                //             neighborPos.x += dir;
+                //         } else if (axis == 1) {
+                //             neighborPos.y += dir;
+                //         } else {
+                //             neighborPos.z += dir;
+                //         }
+                //         auto neighbor = getChunk(neighborPos);
+                //         queueMeshUpdate(neighbor);
+                //     }
+                // }
             }
         }
     }
@@ -305,28 +329,75 @@ void ChunkManager::modifyChunks(const std::shared_ptr<IChunkModifier> &chunkMod)
 void ChunkManager::updateChunks(){
     // Update Occupancy.
     // Current updates all but could be multithreaded and limited to N updates for performance.
-    if (!occupancyUpdateQueue.empty()){
-        std::shared_ptr<Chunk> C = occupancyUpdateQueue.front();
-        C->updateOccupancy();
-        C->setOccupancyQueued(false);
-        occupancyUpdateQueue.pop_front();
-        queueMeshUpdate(C);
-    }
+    // {
+    //     std::lock_guard<std::mutex> lock(occupancyQueueMutex);
+    //     if (!occupancyUpdateQueue.empty() && occupancyUpdateWorkers<maxOccupancyUpdateWorkers){
+    //         std::shared_ptr<Chunk> C = occupancyUpdateQueue.front();
+    //         occupancyUpdateWorkers++;
+    //         std::thread([this, C]() {
+    //             std::lock_guard<std::mutex> lock1(C->mutex);
+    //             C->updateOccupancy();
+    //             C->setOccupancyQueued(false);
+    //             // std::lock_guard<std::mutex> lock2(meshQueueMutex);
+    //             queueMeshUpdate(C);
+    //             occupancyUpdateWorkers--;
+    //         }).detach();
+    //         occupancyUpdateQueue.pop_front();
+    //     }
+    //     // std::shared_ptr<Chunk> C = occupancyUpdateQueue.front();
+    //     // C->updateOccupancy();
+    //     // C->setOccupancyQueued(false);
+    //     // occupancyUpdateQueue.pop_front();
+    //     // queueMeshUpdate(C);
+    // }
 
     // Update Meshes
-    if (!meshUpdateQueue.empty()){
-        std::shared_ptr<Chunk> C = meshUpdateQueue.front();
-        C->updateMesh(); //also updates the buffers.
-        C->setMeshQueued(false);
-        meshUpdateQueue.pop_front();
-        bufferUpdateQueue.push_back(C);
-    }
+    // {
+    //     std::lock_guard<std::mutex> lock(meshQueueMutex);
+    //     if (!meshUpdateQueue.empty() && meshUpdateWorkers<maxMeshUpdateWorkers){
+    //         std::shared_ptr<Chunk> C = meshUpdateQueue.front();
+    //         meshUpdateWorkers++;
+    //         std::thread([this, C]() {
+    //             std::lock_guard<std::mutex> lock1(C->mutex);
+    //             C->updateMesh();
+    //             C->setMeshQueued(false);
+    //             // std::lock_guard<std::mutex> lock2(bufferQueueMutex);
+    //             bufferUpdateQueue.push_back(C);
+    //             meshUpdateWorkers--;
+    //         }).detach();
+    //         meshUpdateQueue.pop_front();
+            
+    //         // std::shared_ptr<Chunk> C = meshUpdateQueue.front();
+    //         // C->updateMesh(); //also updates the buffers.
+    //         // C->setMeshQueued(false);
+    //         // meshUpdateQueue.pop_front();
+    //         // bufferUpdateQueue.push_back(C);
+    //     }
+    // }
 
-    if (!bufferUpdateQueue.empty()){
-        std::cout << "updating Buffer for chunk" << std::endl;
-        std::shared_ptr<Chunk> C = bufferUpdateQueue.front();
-        C->updateBuffer();
-        bufferUpdateQueue.pop_front();
+    while (true){
+        std::shared_ptr<Chunk> C;
+        {
+            std::lock_guard<std::mutex> lock(bufferQueueMutex);
+            if (bufferUpdateQueue.empty()){
+                break;
+            }
+            C = bufferUpdateQueue.front();
+            bufferUpdateQueue.pop_front();
+        }
+
+        {
+            std::unique_lock<std::mutex> lock(C->mutex);
+            C->updateBuffer();
+        }
+
+        // std::cout << "updating Buffer for chunk" << std::endl;
+        // std::shared_ptr<Chunk> C = bufferUpdateQueue.front();
+        // std::unique_lock<std::mutex> lock(C->mutex);
+        // if (lock.owns_lock()){
+            // C->updateBuffer();
+            // bufferUpdateQueue.pop_front();
+        // }
     }
 }
 
@@ -383,6 +454,7 @@ void ChunkManager::generateChunks(glm::vec3 center){
             if (chunk == chunkMap.end()){
                 // Make, bind, insert.
                 std::shared_ptr<Chunk> newChunk = std::make_shared<Chunk>(*this, chunkPos);
+                std::lock_guard<std::mutex> lock(newChunk->mutex);
                 newChunk->bindMesh();
                 chunkMap[chunkPos] = newChunk;
             }
@@ -396,6 +468,7 @@ void ChunkManager::generateChunks(glm::vec3 center){
                 auto chunk = chunkMap.find(chunkPos);
                 if (chunk != chunkMap.end()){
                     if (!chunk->second->isGenerated()){
+                        std::lock_guard<std::mutex> lock(chunk->second->mutex);
                         float startTime = glfwGetTime();
                         chunk->second->generate();
                         chunk->second->updateMesh();
@@ -417,7 +490,9 @@ void ChunkManager::drawChunks(const Program& prog){
             for (int x = -renderDistance/chunkSizeMeters; x<renderDistance/chunkSizeMeters; x++){
                 ChunkPos chunkPos = ChunkPos{x, y, z};
                 auto chunk = chunkMap.find(chunkPos);
+
                 if (chunk != chunkMap.end() && chunk->second->isGenerated()){
+                    std::lock_guard<std::mutex> lock(chunk->second->mutex);
                     chunkMap[chunkPos]->drawMesh(prog);
                 }
             }
