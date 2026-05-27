@@ -84,6 +84,7 @@ glm::ivec3 ChunkManager::worldToLocalVoxel(const glm::ivec3 &voxel) const
 
 std::shared_ptr<Chunk> ChunkManager::getChunk(const ChunkPos &chunkPos) const
 {
+    std::lock_guard<std::mutex> lockMap(chunkMapMutex);
     auto it = chunkMap.find(chunkPos);
     if (it != chunkMap.end()) {
         return it->second;
@@ -369,8 +370,10 @@ void ChunkManager::generateChunks(glm::vec3 center){
     forEachChunkInGenerationDistance(
         center, 
         [&](ChunkPos chunkPos){
+            std::lock_guard<std::mutex> lockMap(chunkMapMutex);
             auto chunk = chunkMap.find(chunkPos);
-            if (chunk == chunkMap.end()){
+            if (chunk == chunkMap.end())
+            {
                 // Make, bind, insert.
                 std::shared_ptr<Chunk> newChunk = std::make_shared<Chunk>(*this, chunkPos);
                 std::lock_guard<std::mutex> lock(newChunk->mutex);
@@ -383,18 +386,30 @@ void ChunkManager::generateChunks(glm::vec3 center){
     std::thread([&, center]() {
         forEachChunkInGenerationDistance(
             center, 
-            [&](ChunkPos chunkPos){
-                auto chunk = chunkMap.find(chunkPos);
-                if (chunk != chunkMap.end()){
-                    if (!chunk->second->isGenerated()){
-                        std::lock_guard<std::mutex> lock(chunk->second->mutex);
+            [&](ChunkPos chunkPos)
+            {
+                std::shared_ptr<Chunk> chunkPtr = nullptr;
+                {
+                    std::lock_guard<std::mutex> lockMap(chunkMapMutex);
+                    auto chunk = chunkMap.find(chunkPos);
+                    if (chunk != chunkMap.end()){
+                        chunkPtr = chunk->second;
+                    }
+                }
+                if (chunkPtr != nullptr && !chunkPtr->isGenerated())
+                {
+                    {
+                        std::lock_guard<std::mutex> lock(chunkPtr->mutex);
                         float startTime = glfwGetTime();
-                        chunk->second->generate();
-                        chunk->second->updateMesh();
-                        chunk->second->setGenerated(true);
+                        chunkPtr->generate();
+                        chunkPtr->updateMesh();
+                        chunkPtr->setGenerated(true);
                         float totalTime = glfwGetTime()-startTime;
                         // std::cout << "ChunkGen (" << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << ") " << std::fixed << std::setprecision(4) << totalTime << "s" << std::endl;
-                        bufferUpdateQueue.push_back(chunk->second);
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(bufferQueueMutex);
+                        bufferUpdateQueue.push_back(chunkPtr);
                     }
                 }
             }
@@ -408,11 +423,18 @@ void ChunkManager::drawChunks(const Program& prog){
         for (int y = terrainMinChunks; y<=terrainMaxChunks; y++){
             for (int x = -renderDistance/chunkSizeMeters; x<renderDistance/chunkSizeMeters; x++){
                 ChunkPos chunkPos = ChunkPos{x, y, z};
-                auto chunk = chunkMap.find(chunkPos);
+                std::shared_ptr<Chunk> chunkPtr = nullptr;
+                {
+                    std::lock_guard<std::mutex> lockMap(chunkMapMutex);
+                    auto chunk = chunkMap.find(chunkPos);
+                    if (chunk != chunkMap.end()){
+                        chunkPtr = chunk->second;
+                    }
+                }
 
-                if (chunk != chunkMap.end() && chunk->second->isGenerated()){
-                    std::lock_guard<std::mutex> lock(chunk->second->mutex);
-                    chunkMap[chunkPos]->drawMesh(prog);
+                if (chunkPtr != nullptr && chunkPtr->isGenerated()){
+                    std::lock_guard<std::mutex> lock(chunkPtr->mutex);
+                    chunkPtr->drawMesh(prog);
                 }
             }
         }

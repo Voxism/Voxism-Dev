@@ -14,6 +14,7 @@
 #include "TerrainGenerator.h"
 
 #include "../threads/ThreadPool.h"
+#include <shared_mutex>
 
 class ChunkManager {
     public:
@@ -30,15 +31,6 @@ class ChunkManager {
         float chunkSizeMeters; // how many meters is the width of the chunk.
         int chunkSizeInts; // how many ints in the x direction of the chunk.
         int occupancyXsize, occupancyYsize, occupancyZsize; //used to iterate through chunks.
-        std::atomic<int> occupancyUpdateWorkers{0}; std::atomic<int> meshUpdateWorkers{0};
-        std::mutex occupancyQueueMutex; std::mutex meshQueueMutex; std::mutex bufferQueueMutex;
-        const int maxOccupancyUpdateWorkers = 5, maxMeshUpdateWorkers = 5, maxBufferUpdates = 5;
-        ThreadPool occupancyUpdatePool;
-        ThreadPool meshUpdatePool;
-        ThreadPool bufferUpdatePool;
-
-        
-         
 
         // Function returns the chunk position for the passed position.
         ChunkPos getChunkPos(const glm::vec3& pos) const;
@@ -92,6 +84,12 @@ class ChunkManager {
             }
         };
         std::unordered_map<ChunkPos, std::shared_ptr<Chunk>, ChunkPosHash> chunkMap;
+        mutable std::mutex chunkMapMutex;
+        std::mutex bufferQueueMutex;
+        ThreadPool occupancyUpdatePool;
+        ThreadPool meshUpdatePool;
+        ThreadPool bufferUpdatePool;
+
         std::unique_ptr<TerrainGenerator> terrainGenerator;
         std::deque<std::shared_ptr<Chunk>> occupancyUpdateQueue;
         std::deque<std::shared_ptr<Chunk>> meshUpdateQueue;
