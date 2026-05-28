@@ -30,6 +30,7 @@ public:
 
     glm::mat4 GetViewMatrix() const override;
 
+    void SetState(glm::vec3 playerPosition, float yawDegrees, float pitchDegrees, float fovDegrees = 60.0f);
     void SetPlayerPos(glm::vec3 new_pos);
     void UpdatePlayerPos(glm::vec3 delta_pos);
 

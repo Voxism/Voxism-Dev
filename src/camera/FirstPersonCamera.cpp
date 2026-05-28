@@ -99,7 +99,9 @@ void FirstPersonCamera::ProcessKeypress(int key, int action) {
 }
 
 glm::mat4 FirstPersonCamera::GetViewMatrix() const {
-    glm::vec3 view_forward = glm::normalize(look_at - cam_pos);
+    // Render from the current camera basis so mouse-look and the viewmodel
+    // stay in sync within the same frame.
+    glm::vec3 view_forward = forward;
     glm::vec3 view_right = glm::normalize(glm::cross(view_forward, glm::vec3(0.0f, 1.0f, 0.0f)));
     glm::vec3 view_up = glm::normalize(glm::cross(view_right, view_forward));
 
@@ -108,7 +110,24 @@ glm::mat4 FirstPersonCamera::GetViewMatrix() const {
         static_cast<float>(cos(roll_rad)) * view_up +
         static_cast<float>(sin(roll_rad)) * view_right;
 
-    return glm::lookAt(cam_pos, look_at, rolled_up);
+    return glm::lookAt(cam_pos, cam_pos + view_forward, rolled_up);
+}
+
+void FirstPersonCamera::SetState(glm::vec3 playerPosition, float yawDegrees, float pitchDegrees, float fovDegrees)
+{
+    player_pos = playerPosition;
+    yaw = yawDegrees;
+    pitch = pitchDegrees;
+    fov = fovDegrees;
+    vertical_velocity = 0.0f;
+    landing_offset = 0.0f;
+    landing_velocity = 0.0f;
+    pending_landing_event_ = LandingEvent {};
+    SetBasisVectors();
+    NudgeOutOfCollision();
+    is_grounded = ProbeGrounded();
+    was_grounded = is_grounded;
+    SyncViewToPlayer(true);
 }
 
 void FirstPersonCamera::ApplyKeyboardLook()
