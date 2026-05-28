@@ -34,7 +34,7 @@ void Materials::init(GLuint bindingPoint){
 
     // Grass — warm yellow-green, more saturated than flat dark green
     addMaterial(
-        glm::vec4(0.11f, 0.40f, 0.11f, 1.0f), // diffuse
+        glm::vec4(0.26f, 0.58f, 0.10f, 1.0f), // diffuse
         0.50f, //roughness
         0.0f, //metallic
         15, //diffRandomFactor [0-200] 
