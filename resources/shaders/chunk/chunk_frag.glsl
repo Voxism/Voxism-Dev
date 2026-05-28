@@ -194,7 +194,7 @@ PatternNoise getGradientPattern(vec3 localCoord, float random){
     PatternNoise pn;
 
     float frequency = 0.2;
-    float scale = 0.10;
+    float scale = 0.10a;
     float randomScale = 1000;
     float noise = sin(localCoord.x*frequency + random*frequency*randomScale) * sin(localCoord.y*frequency + random*frequency*randomScale) * sin(localCoord.z*frequency + random*frequency*randomScale) * scale;
     pn.diffuseNoise = vec3(noise);
