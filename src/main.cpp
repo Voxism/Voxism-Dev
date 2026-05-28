@@ -1661,7 +1661,7 @@ public:
 		const float sunTurnInput = static_cast<float>(keySunRight_) - static_cast<float>(keySunLeft_);
 		if (!radialMenuOpen && std::abs(sunTurnInput) > 0.0f) {
 			rotateSunAroundWorldY(sunTurnInput * sunRotateSpeedRadPerSec_ * dt);
-			chunkManager->markShadowMapsDirty();
+			sunShadowDirty_ = true;
 		}
 		const bool organicInUse =
 			!radialMenuOpen &&
@@ -1992,11 +1992,16 @@ public:
 		}
 
 		if (shadowSettings_.enabled && shadowMap_.isReady()) {
-			const bool wantsShadowUpdate =
+			const bool terrainShadowUpdate =
 				chunkManager->isShadowMapsDirty() || chunkManager->hasPendingBufferUpdates();
 			shadowUpdateTimer_ += frameDt_;
-			if (wantsShadowUpdate && shadowUpdateTimer_ >= kShadowUpdateInterval) {
-				shadowUpdateTimer_ = 0.0f;
+			const bool terrainReady =
+				terrainShadowUpdate && shadowUpdateTimer_ >= kShadowUpdateInterval;
+			if (sunShadowDirty_ || terrainReady) {
+				if (terrainReady) {
+					shadowUpdateTimer_ = 0.0f;
+				}
+				sunShadowDirty_ = false;
 				shadowMap_.updateMatrices(P,
 				                          V,
 				                          camera->GetCameraPos(),
@@ -2330,6 +2335,7 @@ private:
 	static constexpr float kShadowUpdateInterval = 0.55f;
 	float shadowUpdateTimer_ = kShadowUpdateInterval;
 	float frameDt_ = 0.016f;
+	bool sunShadowDirty_ = false;
 
 	/** After this many seconds with no move input and low horizontal speed, idle avatar stops turning to face the camera (orbit to see front). Toggle with T. */
 	static constexpr float kIdleYawHoldSeconds = 2.0f;
