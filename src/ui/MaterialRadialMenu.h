@@ -34,7 +34,7 @@ private:
     float iconSize() const;
     float sliceCenterDegrees(int index) const;
     void drawSlice(ImDrawList *drawList, int index, float innerRadius, float outerRadius, ImU32 color) const;
-    void drawSwatch(ImDrawList *drawList, const MaterialMenuOption &option, const ImVec2 &center, float size, float alpha) const;
+    void drawVoxelCube(ImDrawList *drawList, const MaterialMenuOption &option, const ImVec2 &center, float size, float alpha) const;
 
     std::vector<MaterialMenuOption> options_;
     ImFont *font_ = nullptr;

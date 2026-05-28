@@ -41,11 +41,13 @@ public:
 
 private:
     void clearInactiveToolState();
+    void syncMaterialToTools();
 
     CubeTool cubeTool_;
     AreaTool areaTool_;
     SphereTool sphereTool_;
     OrganicSphereTool organicSphereTool_;
     ToolKind activeTool_ = ToolKind::Cube;
+    int materialIndex_ = 1;
     float maxUseDistance_ = 8.0f;
 };

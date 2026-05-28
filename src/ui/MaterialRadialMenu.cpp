@@ -77,6 +77,11 @@ ImU32 colorFromVec3(const glm::vec3 &color, float alpha)
         static_cast<int>(255.0f * clamp01(alpha)));
 }
 
+glm::vec3 shadeColor(const glm::vec3 &color, float factor, float lift = 0.0f)
+{
+    return glm::clamp(color * factor + glm::vec3(lift), glm::vec3(0.0f), glm::vec3(1.0f));
+}
+
 double nowSeconds()
 {
     using Clock = std::chrono::steady_clock;
@@ -262,23 +267,55 @@ void MaterialRadialMenu::drawSlice(ImDrawList *drawList, int index, float inner,
     drawList->AddConcavePolyFilled(points.data(), static_cast<int>(points.size()), color);
 }
 
-void MaterialRadialMenu::drawSwatch(ImDrawList *drawList, const MaterialMenuOption &option, const ImVec2 &center, float size, float alpha) const
+void MaterialRadialMenu::drawVoxelCube(ImDrawList *drawList, const MaterialMenuOption &option, const ImVec2 &center, float size, float alpha) const
 {
-    const float half = size * 0.5f;
-    const float gap = std::max(2.0f, size * 0.06f);
-    const float cell = (size - gap) * 0.5f;
-    const ImVec2 origin(center.x - half, center.y - half);
+    const float w = size * 0.48f;
+    const float h = size * 0.28f;
+    const float drop = size * 0.42f;
+    const float yOffset = size * 0.12f;
 
-    for (int y = 0; y < 2; ++y) {
-        for (int x = 0; x < 2; ++x) {
-            const int index = y * 2 + x;
-            const ImVec2 min(
-                origin.x + static_cast<float>(x) * (cell + gap),
-                origin.y + static_cast<float>(y) * (cell + gap));
-            const ImVec2 max(min.x + cell, min.y + cell);
-            drawList->AddRectFilled(min, max, colorFromVec3(option.swatchColors[index], alpha), 2.0f);
-        }
-    }
+    const ImVec2 top(center.x, center.y - h - yOffset);
+    const ImVec2 right(center.x + w, center.y - yOffset);
+    const ImVec2 bottom(center.x, center.y + h - yOffset);
+    const ImVec2 left(center.x - w, center.y - yOffset);
+    const ImVec2 bottomDrop(center.x, center.y + h + drop - yOffset);
+    const ImVec2 leftDrop(center.x - w, center.y + drop - yOffset);
+    const ImVec2 rightDrop(center.x + w, center.y + drop - yOffset);
+
+    const ImVec2 topFace[] = {top, right, bottom, left};
+    const ImVec2 leftFace[] = {left, bottom, bottomDrop, leftDrop};
+    const ImVec2 rightFace[] = {bottom, right, rightDrop, bottomDrop};
+
+    const glm::vec3 topColor = shadeColor(option.swatchColors[3], 1.10f, 0.045f);
+    const glm::vec3 leftColor = shadeColor(option.swatchColors[0], 0.68f);
+    const glm::vec3 rightColor = shadeColor(option.swatchColors[2], 0.86f, 0.010f);
+
+    drawList->AddConvexPolyFilled(leftFace, 4, colorFromVec3(leftColor, alpha));
+    drawList->AddConvexPolyFilled(rightFace, 4, colorFromVec3(rightColor, alpha));
+    drawList->AddConvexPolyFilled(topFace, 4, colorFromVec3(topColor, alpha));
+
+    const ImVec2 topPatch[] = {
+        radialPoint(center, -112.0f, size * 0.15f),
+        radialPoint(center, -62.0f, size * 0.24f),
+        radialPoint(center, -14.0f, size * 0.15f),
+        radialPoint(center, -166.0f, size * 0.10f),
+    };
+    const ImVec2 leftPatch[] = {
+        ImVec2(left.x + w * 0.24f, left.y + drop * 0.24f),
+        ImVec2(bottom.x - w * 0.26f, bottom.y + drop * 0.19f),
+        ImVec2(bottom.x - w * 0.26f, bottom.y + drop * 0.48f),
+        ImVec2(left.x + w * 0.24f, left.y + drop * 0.54f),
+    };
+    const ImVec2 rightPatch[] = {
+        ImVec2(bottom.x + w * 0.24f, bottom.y + drop * 0.16f),
+        ImVec2(right.x - w * 0.24f, right.y + drop * 0.22f),
+        ImVec2(right.x - w * 0.24f, right.y + drop * 0.52f),
+        ImVec2(bottom.x + w * 0.24f, bottom.y + drop * 0.45f),
+    };
+
+    drawList->AddConvexPolyFilled(topPatch, 4, colorFromVec3(shadeColor(option.swatchColors[1], 1.08f, 0.035f), alpha * 0.70f));
+    drawList->AddConvexPolyFilled(leftPatch, 4, colorFromVec3(shadeColor(option.swatchColors[1], 0.62f), alpha * 0.55f));
+    drawList->AddConvexPolyFilled(rightPatch, 4, colorFromVec3(shadeColor(option.swatchColors[3], 0.82f, 0.008f), alpha * 0.55f));
 }
 
 void MaterialRadialMenu::draw()
@@ -334,7 +371,7 @@ void MaterialRadialMenu::draw()
             const ImVec2 iconCenter = center_ + direction * iconDist;
             const bool highlighted = (i == hoveredIndex_);
             const float iconScale = highlighted ? 1.14f : 1.0f;
-            drawSwatch(drawList, options_[i], iconCenter, icon * iconScale, highlighted ? 1.0f : 0.84f);
+            drawVoxelCube(drawList, options_[i], iconCenter, icon * iconScale, highlighted ? 1.0f : 0.84f);
 
             const float labelSize = std::max(18.0f, outer * 0.052f);
             const ImVec2 labelText(
@@ -364,6 +401,6 @@ void MaterialRadialMenu::draw()
 
         const ImVec2 direction = normalizedDirection(sliceCenterDegrees(releaseAnimIndex_));
         const ImVec2 iconCenter = center_ + direction * iconDist * (1.0f + 0.10f * eased);
-        drawSwatch(drawList, options_[releaseAnimIndex_], iconCenter, icon * (1.18f + 0.18f * eased), alpha);
+        drawVoxelCube(drawList, options_[releaseAnimIndex_], iconCenter, icon * (1.18f + 0.18f * eased), alpha);
     }
 }

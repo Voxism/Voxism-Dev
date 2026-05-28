@@ -7,7 +7,9 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <random>
@@ -108,6 +110,27 @@ static void ensureTexcoordsXZ(tinyobj::shape_t &sh)
 		sh.mesh.texcoords[2 * i + 0] = x * 0.12f + 0.5f;
 		sh.mesh.texcoords[2 * i + 1] = z * 0.12f + 0.5f;
 	}
+}
+
+namespace {
+ImU32 uiRgba(int r, int g, int b, float alpha)
+{
+	return IM_COL32(r, g, b, static_cast<int>(255.0f * glm::clamp(alpha, 0.0f, 1.0f)));
+}
+
+ImU32 uiColorFromVec3(const glm::vec3 &color, float alpha)
+{
+	return IM_COL32(
+		static_cast<int>(255.0f * glm::clamp(color.r, 0.0f, 1.0f)),
+		static_cast<int>(255.0f * glm::clamp(color.g, 0.0f, 1.0f)),
+		static_cast<int>(255.0f * glm::clamp(color.b, 0.0f, 1.0f)),
+		static_cast<int>(255.0f * glm::clamp(alpha, 0.0f, 1.0f)));
+}
+
+glm::vec3 shadeHudColor(const glm::vec3 &color, float factor, float lift = 0.0f)
+{
+	return glm::clamp(color * factor + glm::vec3(lift), glm::vec3(0.0f), glm::vec3(1.0f));
+}
 }
 
 /** Tiled procedural ground ( RGB8, power-of-2 ), style similar to tiled terrain textures. */
@@ -378,6 +401,7 @@ public:
 		(void)io;
 
 		ImGui::StyleColorsDark();
+		loadHudFont();
 
 		const char *glsl_version = "#version 330";
 		ImGui_ImplGlfw_InitForOpenGL(windowManager->getHandle(), true);
@@ -485,6 +509,36 @@ public:
 		options.push_back(makeMaterialMenuOption(Materials::Sand));
 		options.push_back(makeMaterialMenuOption(Materials::Gold));
 		materialRadialMenu_.init(options);
+	}
+
+	void loadHudFont()
+	{
+		struct FontCandidate {
+			const char *path;
+			float size;
+		};
+
+		const FontCandidate candidates[] = {
+			{"C:/Windows/Fonts/GIL_____.TTF", 24.0f},
+			{"C:/Windows/Fonts/segoeui.ttf", 23.0f},
+			{"C:/Windows/Fonts/arial.ttf", 23.0f},
+			{"/System/Library/Fonts/Supplemental/Gill Sans.ttc", 24.0f},
+			{"/System/Library/Fonts/Supplemental/Avenir Next.ttc", 23.0f},
+		};
+
+		ImGuiIO &io = ImGui::GetIO();
+		for (const FontCandidate &candidate : candidates) {
+			std::ifstream file(candidate.path);
+			if (!file.good()) {
+				continue;
+			}
+
+			hudFont_ = io.Fonts->AddFontFromFileTTF(candidate.path, candidate.size);
+			if (hudFont_) {
+				return;
+			}
+		}
+		hudFont_ = io.Fonts->Fonts.empty() ? nullptr : io.Fonts->Fonts[0];
 	}
 
 	glm::vec3 currentSunDirection() const
@@ -1123,6 +1177,9 @@ public:
 				camera = &fpvCamera;
 			}
 		}
+		if (key == GLFW_KEY_F3 && action == GLFW_PRESS) {
+			showDebugWindow_ = !showDebugWindow_;
+		}
 
 		applyCameraKeyState(key, action);
 
@@ -1171,8 +1228,10 @@ public:
 				toolManager_.cycleTool(1);
 			} else if (key == GLFW_KEY_LEFT_BRACKET) {
 				toolManager_.cycleSize(-1);
+				markSizeChanged();
 			} else if (key == GLFW_KEY_RIGHT_BRACKET) {
 				toolManager_.cycleSize(1);
+				markSizeChanged();
 			} else if (key == GLFW_KEY_UP) {
 				toolManager_.cycleMaterial(1);
 			} else if (key == GLFW_KEY_DOWN) {
@@ -1422,6 +1481,121 @@ public:
 		chunkManager->updateChunks();
 	}
 
+	void drawHudVoxelCube(ImDrawList *drawList, const glm::vec3 &baseColor, const ImVec2 &center, float size, float alpha) const
+	{
+		const float w = size * 0.48f;
+		const float h = size * 0.28f;
+		const float drop = size * 0.42f;
+		const float yOffset = size * 0.12f;
+
+		const ImVec2 top(center.x, center.y - h - yOffset);
+		const ImVec2 right(center.x + w, center.y - yOffset);
+		const ImVec2 bottom(center.x, center.y + h - yOffset);
+		const ImVec2 left(center.x - w, center.y - yOffset);
+		const ImVec2 bottomDrop(center.x, center.y + h + drop - yOffset);
+		const ImVec2 leftDrop(center.x - w, center.y + drop - yOffset);
+		const ImVec2 rightDrop(center.x + w, center.y + drop - yOffset);
+
+		const ImVec2 topFace[] = {top, right, bottom, left};
+		const ImVec2 leftFace[] = {left, bottom, bottomDrop, leftDrop};
+		const ImVec2 rightFace[] = {bottom, right, rightDrop, bottomDrop};
+
+		drawList->AddConvexPolyFilled(leftFace, 4, uiColorFromVec3(shadeHudColor(baseColor, 0.68f), alpha));
+		drawList->AddConvexPolyFilled(rightFace, 4, uiColorFromVec3(shadeHudColor(baseColor, 0.86f, 0.010f), alpha));
+		drawList->AddConvexPolyFilled(topFace, 4, uiColorFromVec3(shadeHudColor(baseColor, 1.10f, 0.045f), alpha));
+	}
+
+	std::string activeSizeText() const
+	{
+		char buffer[32];
+		if (toolManager_.activeToolUsesMeterRadius()) {
+			snprintf(buffer, sizeof(buffer), "%.2f m", toolManager_.activeToolRadiusMeters());
+		} else {
+			snprintf(buffer, sizeof(buffer), "%d vox", toolManager_.activeToolSize());
+		}
+		return std::string(buffer);
+	}
+
+	int activeDiscreteSizeIndex() const
+	{
+		const int sizes[] = {2, 4, 8, 16, 32, 64};
+		const int activeSize = toolManager_.activeToolSize();
+		for (int i = 0; i < 6; ++i) {
+			if (sizes[i] == activeSize) {
+				return i;
+			}
+		}
+		return 0;
+	}
+
+	void markSizeChanged()
+	{
+		sizePulseStartSeconds_ = glfwGetTime();
+	}
+
+	void drawGameplayHud(int width, int height)
+	{
+		(void)height;
+		ImDrawList *drawList = ImGui::GetForegroundDrawList();
+		ImFont *font = hudFont_ ? hudFont_ : ImGui::GetFont();
+		const float panelWidth = std::min(640.0f, std::max(430.0f, static_cast<float>(width) - 36.0f));
+		const float panelHeight = 64.0f;
+		const ImVec2 panelMin(18.0f, 18.0f);
+		const ImVec2 panelMax(panelMin.x + panelWidth, panelMin.y + panelHeight);
+
+		drawList->AddRectFilled(panelMin, panelMax, uiRgba(10, 14, 20, 0.48f), 6.0f);
+
+		const float col0 = panelMin.x + 18.0f;
+		const float col1 = panelMin.x + panelWidth * 0.31f;
+		const float col2 = panelMin.x + panelWidth * 0.66f;
+		const float labelY = panelMin.y + 11.0f;
+		const float valueY = panelMin.y + 30.0f;
+		const ImU32 labelColor = uiRgba(202, 212, 224, 0.72f);
+		const ImU32 valueColor = uiRgba(244, 249, 249, 0.94f);
+
+		drawList->AddLine(ImVec2(col1 - 14.0f, panelMin.y + 12.0f), ImVec2(col1 - 14.0f, panelMax.y - 12.0f), uiRgba(255, 255, 255, 0.10f), 1.0f);
+		drawList->AddLine(ImVec2(col2 - 14.0f, panelMin.y + 12.0f), ImVec2(col2 - 14.0f, panelMax.y - 12.0f), uiRgba(255, 255, 255, 0.10f), 1.0f);
+
+		drawList->AddText(font, 15.0f, ImVec2(col0, labelY), labelColor, "Tool");
+		drawList->AddText(font, 24.0f, ImVec2(col0, valueY), valueColor, toolManager_.activeToolName());
+
+		drawList->AddText(font, 15.0f, ImVec2(col1, labelY), labelColor, "Material");
+		const glm::vec3 materialColor = Materials::paletteColor(toolManager_.activeMaterialIndex());
+		drawHudVoxelCube(drawList, materialColor, ImVec2(col1 + 18.0f, valueY + 16.0f), 28.0f, 0.94f);
+		drawList->AddText(font, 22.0f, ImVec2(col1 + 44.0f, valueY + 2.0f), valueColor, toolManager_.activeMaterialName());
+
+		const double sizePulseAge = glfwGetTime() - sizePulseStartSeconds_;
+		const float sizePulse = (sizePulseAge >= 0.0 && sizePulseAge < 0.75)
+			? static_cast<float>(1.0 - sizePulseAge / 0.75)
+			: 0.0f;
+		if (sizePulse > 0.0f) {
+			drawList->AddRectFilled(ImVec2(col2 - 4.0f, panelMin.y + 8.0f), ImVec2(panelMax.x - 12.0f, panelMax.y - 8.0f), uiRgba(255, 255, 255, 0.12f * sizePulse), 5.0f);
+		}
+
+		drawList->AddText(font, 15.0f, ImVec2(col2, labelY), labelColor, "Size");
+		const std::string sizeText = activeSizeText();
+		drawList->AddText(font, 24.0f, ImVec2(col2, valueY), valueColor, sizeText.c_str());
+
+		const float sizeTextWidth = font->CalcTextSizeA(24.0f, FLT_MAX, 0.0f, sizeText.c_str()).x;
+		const float meterRight = panelMax.x - 20.0f;
+		const float meterX = std::min(meterRight - 92.0f, col2 + sizeTextWidth + 28.0f);
+		const float meterWidth = std::max(56.0f, meterRight - meterX);
+		const float meterY = valueY + 14.0f;
+		if (toolManager_.activeToolUsesMeterRadius()) {
+			const float t = glm::clamp((toolManager_.activeToolRadiusMeters() - 0.25f) / (8.0f - 0.25f), 0.0f, 1.0f);
+			drawList->AddRectFilled(ImVec2(meterX, meterY), ImVec2(meterX + meterWidth, meterY + 7.0f), uiRgba(255, 255, 255, 0.16f), 3.0f);
+			drawList->AddRectFilled(ImVec2(meterX, meterY), ImVec2(meterX + meterWidth * t, meterY + 7.0f), uiRgba(244, 249, 249, 0.78f), 3.0f);
+		} else {
+			const int activeIndex = activeDiscreteSizeIndex();
+			for (int i = 0; i < 6; ++i) {
+				const float step = (meterWidth - 8.0f) / 5.0f;
+				const float x = meterX + static_cast<float>(i) * step;
+				const float alpha = (i <= activeIndex) ? 0.82f : 0.20f;
+				drawList->AddRectFilled(ImVec2(x, meterY - 1.0f), ImVec2(x + 8.0f, meterY + 7.0f), uiRgba(244, 249, 249, alpha), 2.0f);
+			}
+		}
+	}
+
 	void render()
 	{
 		int width = 0, height = 0;
@@ -1582,44 +1756,48 @@ public:
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
-		ImGui::Begin("Debug");
+		drawGameplayHud(width, height);
 
-		ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-		ImGui::Text("Camera Pos: %.2f %.2f %.2f",
-					camera->GetCameraPos().x,
-					camera->GetCameraPos().y,
-					camera->GetCameraPos().z);
-		ImGui::Text("Sun Pos: %.2f %.2f %.2f", sunWorld_.x, sunWorld_.y, sunWorld_.z);
-		ImGui::Text("Tool: %s", toolManager_.activeToolName());
-		ImGui::Text("Material: %s", toolManager_.activeMaterialName());
-		ImGui::Text("Birds: %zu", birdFlock_.birdCount());
-		if (toolManager_.activeToolUsesMeterRadius()) {
-			ImGui::Text("Tool Size: %.2f m", toolManager_.activeToolRadiusMeters());
-		} else {
-			ImGui::Text("Tool Size: %d", toolManager_.activeToolSize());
-		}
+		if (showDebugWindow_) {
+			ImGui::Begin("Debug");
 
-		ImGui::Checkbox("God Rays", &postToggles_.godRaysEnabled);
-		ImGui::Checkbox("Bloom", &postToggles_.bloomEnabled);
-		ImGui::Checkbox("SSAO", &postToggles_.ssaoEnabled);
-		{
-			bool shadowsEnabled = shadowSettings_.enabled;
-			if (ImGui::Checkbox("Shadows", &shadowsEnabled)) {
-				if (shadowsEnabled) {
-					chunkManager->markShadowMapsDirty();
-				}
-				shadowSettings_.enabled = shadowsEnabled;
+			ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+			ImGui::Text("Camera Pos: %.2f %.2f %.2f",
+						camera->GetCameraPos().x,
+						camera->GetCameraPos().y,
+						camera->GetCameraPos().z);
+			ImGui::Text("Sun Pos: %.2f %.2f %.2f", sunWorld_.x, sunWorld_.y, sunWorld_.z);
+			ImGui::Text("Tool: %s", toolManager_.activeToolName());
+			ImGui::Text("Material: %s", toolManager_.activeMaterialName());
+			ImGui::Text("Birds: %zu", birdFlock_.birdCount());
+			if (toolManager_.activeToolUsesMeterRadius()) {
+				ImGui::Text("Tool Size: %.2f m", toolManager_.activeToolRadiusMeters());
+			} else {
+				ImGui::Text("Tool Size: %d", toolManager_.activeToolSize());
 			}
-		}
-		ImGui::SliderFloat("Shadow Strength", &shadowSettings_.shadowStrength, 0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat("Shadow Softness", &shadowSettings_.blurTexels, 0.25f, 3.0f, "%.2f");
-		ImGui::SliderFloat("Shadow Min Light", &shadowSettings_.minShadowVisibility, 0.2f, 1.0f, "%.2f");
 
-		if (ImGui::SliderFloat("Music", &musicVolume_, 0.0f, 1.0f, "%.2f")) {
-			soundtrack_.setVolume(musicVolume_);
-		}
+			ImGui::Checkbox("God Rays", &postToggles_.godRaysEnabled);
+			ImGui::Checkbox("Bloom", &postToggles_.bloomEnabled);
+			ImGui::Checkbox("SSAO", &postToggles_.ssaoEnabled);
+			{
+				bool shadowsEnabled = shadowSettings_.enabled;
+				if (ImGui::Checkbox("Shadows", &shadowsEnabled)) {
+					if (shadowsEnabled) {
+						chunkManager->markShadowMapsDirty();
+					}
+					shadowSettings_.enabled = shadowsEnabled;
+				}
+			}
+			ImGui::SliderFloat("Shadow Strength", &shadowSettings_.shadowStrength, 0.0f, 1.0f, "%.2f");
+			ImGui::SliderFloat("Shadow Softness", &shadowSettings_.blurTexels, 0.25f, 3.0f, "%.2f");
+			ImGui::SliderFloat("Shadow Min Light", &shadowSettings_.minShadowVisibility, 0.2f, 1.0f, "%.2f");
 
-		ImGui::End();
+			if (ImGui::SliderFloat("Music", &musicVolume_, 0.0f, 1.0f, "%.2f")) {
+				soundtrack_.setVolume(musicVolume_);
+			}
+
+			ImGui::End();
+		}
 		radialToolMenu_.draw();
 		materialRadialMenu_.draw();
 		ImGui::Render();
@@ -1634,6 +1812,9 @@ private:
 	float animTime_ = 0.0f;
 	float moveBlendDisplay_ = 0.0f;
 	float characterScale_ = 1.0f;
+	ImFont *hudFont_ = nullptr;
+	bool showDebugWindow_ = false;
+	double sizePulseStartSeconds_ = -100.0;
 
 	FirstPersonCamera fpvCamera;
 	FreeCamera freeCamera;
