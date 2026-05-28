@@ -65,6 +65,8 @@ class ChunkManager {
 
         // std::shared_ptr<Chunk> generateChunk(ChunkPos& chunkPos);
         std::shared_ptr<Chunk> getChunk(const ChunkPos &chunkPos) const;
+        std::vector<ChunkPos> getGeneratedChunkPositions() const;
+        std::shared_ptr<Chunk> ensureChunkExists(const ChunkPos &chunkPos);
         const TerrainGenerator& terrain() const { return *terrainGenerator; };
         bool loadFloraAssets(const std::string &resourceDirectory);
 
