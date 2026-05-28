@@ -18,7 +18,8 @@ void Materials::init(GLuint bindingPoint){
     // basic grass
     addMaterial(
         glm::vec4(0.03, 0.14, 0.04, 1.0), // ambient (dark green)
-        glm::vec4(0.1, 0.3, 0.1, 1.0), // diffuse (rich green)
+        // glm::vec4(0.1, 0.3, 0.1, 1.0), // diffuse (rich green)
+        glm::vec4(0.18, 0.75, 0.12, 1.0), // diffuse (rich green)
         glm::vec4(0.24, 0.41, 0.24, 1.0), // specular (very subtle, slightly green)
         15.0f // shininess (broad highlight)
     );

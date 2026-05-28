@@ -509,7 +509,7 @@ void ChunkManager::generateChunks(glm::vec3 center){
                         for (int xVox = 0; xVox < sideVox; ++xVox) {
                             const float worldX = x*chunkSizeMeters + static_cast<float>(xVox) * voxSizeMeters;
                             heightMap[zVox * sideVox + xVox] = terrain().heightAt(worldX, worldZ);
-                            std::cout << terrain().heightAt(0.01245f,1.324f) << std::endl;
+                            // std::cout << terrain().heightAt(0.01245f,1.324f) << std::endl;
                         }
                     }
                     
@@ -537,7 +537,7 @@ void ChunkManager::generateChunks(glm::vec3 center){
                                 const float totalTime = std::chrono::duration<float>(
                                     std::chrono::steady_clock::now() - startTime).count();
                                 (void)totalTime;
-                                std::cout << "ChunkGen (" << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << ") " << std::fixed << std::setprecision(4) << totalTime << "s" << std::endl;
+                                // std::cout << "ChunkGen (" << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << ") " << std::fixed << std::setprecision(4) << totalTime << "s" << std::endl;
                             }
                             {
                                 std::lock_guard<std::mutex> lock(bufferQueueMutex);
@@ -637,5 +637,5 @@ void ChunkManager::drawChunks(const Program& prog, const FirstPersonCamera &fpc,
     // Culling empty Chunks:    261
     // Culling Occluded Chunks:  82
     // VFC:                     
-    std::cout << "Number of Draws: " << numberOfDraws << std::endl;
+    // std::cout << "Number of Draws: " << numberOfDraws << std::endl;
 }
