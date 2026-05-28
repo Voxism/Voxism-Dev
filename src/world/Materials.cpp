@@ -17,23 +17,18 @@ void Materials::init(GLuint bindingPoint){
             Material{diffuse, roughness, metallic});
     };
 
-    auto addDb16Material = [&](float r, float g, float b) {
+    auto addDb16Material = [&](
+        float r,
+        float g,
+        float b,
+        float roughness = 0.78f,
+        float metallic = 0.0f
+    ) {
         const glm::vec4 diffuse(r, g, b, 1.0f);
-        const glm::vec4 ambient(
-            glm::max(0.02f, r * 0.22f),
-            glm::max(0.02f, g * 0.22f),
-            glm::max(0.02f, b * 0.22f),
-            1.0f);
-        const glm::vec4 specular(
-            glm::min(1.0f, r * 0.35f + 0.04f),
-            glm::min(1.0f, g * 0.35f + 0.04f),
-            glm::min(1.0f, b * 0.35f + 0.04f),
-            1.0f);
-        addMaterial(ambient, diffuse, specular, 18.0f);
+        addMaterial(diffuse, roughness, metallic);
     };
 
     // Grass
-
     addMaterial(
         glm::vec4(0.11f, 0.40f, 0.11f, 1.0f),
         0.55f,
@@ -76,23 +71,23 @@ void Materials::init(GLuint bindingPoint){
     );
 
     // DB16 palette for authored voxel flora and props.
-    addDb16Material(0x14 / 255.0f, 0x0c / 255.0f, 0x1c / 255.0f);
-    addDb16Material(0x44 / 255.0f, 0x24 / 255.0f, 0x34 / 255.0f);
-    addDb16Material(0x30 / 255.0f, 0x34 / 255.0f, 0x6d / 255.0f);
-    addDb16Material(0x4e / 255.0f, 0x4a / 255.0f, 0x4e / 255.0f);
-    addDb16Material(0x85 / 255.0f, 0x4c / 255.0f, 0x30 / 255.0f);
-    addDb16Material(0x34 / 255.0f, 0x65 / 255.0f, 0x24 / 255.0f);
-    addDb16Material(0xd0 / 255.0f, 0x46 / 255.0f, 0x48 / 255.0f);
-    addDb16Material(0x75 / 255.0f, 0x71 / 255.0f, 0x61 / 255.0f);
-    addDb16Material(0x59 / 255.0f, 0x7d / 255.0f, 0xce / 255.0f);
-    addDb16Material(0xd2 / 255.0f, 0x7d / 255.0f, 0x2c / 255.0f);
-    addDb16Material(0x85 / 255.0f, 0x95 / 255.0f, 0xa1 / 255.0f);
-    addDb16Material(0x6d / 255.0f, 0xaa / 255.0f, 0x2c / 255.0f);
-    addDb16Material(0xd2 / 255.0f, 0xaa / 255.0f, 0x99 / 255.0f);
-    addDb16Material(0x6d / 255.0f, 0xc2 / 255.0f, 0xca / 255.0f);
-    addDb16Material(0xda / 255.0f, 0xd4 / 255.0f, 0x5e / 255.0f);
-    addDb16Material(0xde / 255.0f, 0xee / 255.0f, 0xd6 / 255.0f);
-    
+    addDb16Material(0x08 / 255.0f, 0x08 / 255.0f, 0x09 / 255.0f, 0.95f, 0.00f); // DB16 Black
+    addDb16Material(0x44 / 255.0f, 0x24 / 255.0f, 0x55 / 255.0f, 0.82f, 0.00f); // DB16 Purple
+    addDb16Material(0x20 / 255.0f, 0x24 / 255.0f, 0x5f / 255.0f, 0.76f, 0.00f); // DB16 Navy
+    addDb16Material(0x4e / 255.0f, 0x4a / 255.0f, 0x4e / 255.0f, 0.70f, 0.05f); // DB16 Slate
+    addDb16Material(0x85 / 255.0f, 0x4c / 255.0f, 0x30 / 255.0f, 0.82f, 0.00f); // DB16 Brown
+    addDb16Material(0x34 / 255.0f, 0x65 / 255.0f, 0x24 / 255.0f, 0.88f, 0.00f); // DB16 Dark Green
+    addDb16Material(0xd0 / 255.0f, 0x46 / 255.0f, 0x48 / 255.0f, 0.68f, 0.00f); // DB16 Red
+    addDb16Material(0x75 / 255.0f, 0x71 / 255.0f, 0x61 / 255.0f, 0.78f, 0.00f); // DB16 Gray
+    addDb16Material(0x59 / 255.0f, 0x7d / 255.0f, 0xce / 255.0f, 0.56f, 0.00f); // DB16 Blue
+    addDb16Material(0xd2 / 255.0f, 0x7d / 255.0f, 0x2c / 255.0f, 0.64f, 0.00f); // DB16 Orange
+    addDb16Material(0x9a / 255.0f, 0xa5 / 255.0f, 0xad / 255.0f, 0.09f, 1.0f); // DB16 Silver
+    addDb16Material(0x6d / 255.0f, 0xaa / 255.0f, 0x2c / 255.0f, 0.84f, 0.00f); // DB16 Green
+    addDb16Material(0xd2 / 255.0f, 0xaa / 255.0f, 0x99 / 255.0f, 0.72f, 0.00f); // DB16 Peach
+    addDb16Material(0x6d / 255.0f, 0xc2 / 255.0f, 0xca / 255.0f, 0.44f, 0.00f); // DB16 Cyan
+    addDb16Material(0xda / 255.0f, 0xd4 / 255.0f, 0x5e / 255.0f, 0.58f, 0.00f); // DB16 Yellow
+    addDb16Material(0xde / 255.0f, 0xee / 255.0f, 0xd6 / 255.0f, 0.66f, 0.00f); // DB16 White
+        
     // generate buffer.
     glGenBuffers(1, &matBuffID);
     glBindBuffer(GL_UNIFORM_BUFFER, matBuffID);
