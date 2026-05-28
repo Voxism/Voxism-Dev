@@ -86,6 +86,11 @@ class ChunkManager {
                                  const glm::vec3 &center,
                                  const Frustum& lightFrustum,
                                  float radiusMeters);
+
+        void markShadowMapsDirty();
+        bool isShadowMapsDirty() const;
+        void clearShadowMapsDirty();
+        bool hasPendingBufferUpdates() const;
        
     private:
         // Stuct necessary for mapping an xyz of the chunk to the chunk.
@@ -99,13 +104,14 @@ class ChunkManager {
         };
         std::unordered_map<ChunkPos, std::shared_ptr<Chunk>, ChunkPosHash> chunkMap;
         mutable std::mutex chunkMapMutex;
-        std::mutex bufferQueueMutex;
+        mutable std::mutex bufferQueueMutex;
 
         PerlinNoise noise;
         std::shared_ptr<TerrainGenerator> terrainGenerator;
         std::deque<std::shared_ptr<Chunk>> occupancyUpdateQueue;
         std::deque<std::shared_ptr<Chunk>> meshUpdateQueue;
         std::deque<std::shared_ptr<Chunk>> bufferUpdateQueue; //buffers must be updated on the main thread.
+        std::atomic<bool> shadowMapsDirty_{true};
 
         // Thread pools MUST be declared last so they are destroyed FIRST.
         // Their destructors join worker threads; those threads dereference
