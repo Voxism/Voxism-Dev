@@ -204,10 +204,10 @@ SunProjection projectSunToScreen(const glm::mat4& P, const glm::mat4& V,
 } // namespace
 
 struct PostProcessToggle {
-    bool godRaysEnabled  = false;
+    bool godRaysEnabled  = true;
     bool bloomEnabled    = false;
     bool ssaoEnabled     = true;
-    float godrayStrength = 1.35f;
+    float godrayStrength = 0.8f;
     float bloomStrength  = 1.6f;
     float ssaoRadius     = 0.75f;
     float ssaoBias       = 0.025f;
