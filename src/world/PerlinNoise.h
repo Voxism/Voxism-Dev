@@ -1,19 +1,25 @@
 #pragma once
 
+#ifndef _PERLINNOISE_H_
+#define _PERLINNOISE_H_
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <numeric>
 #include <random>
 #include <vector>
+// #include "TerrainGenerator.h"
+#include "Octave.h"
+#include <glm/glm.hpp>
 
 class PerlinNoise {
 public:
     explicit PerlinNoise(uint32_t seed = 1337u) : perm_(512, 0) {
-        std::vector<int> p(256);
-        std::iota(p.begin(), p.end(), 0);
-        std::mt19937 rng(seed);
-        std::shuffle(p.begin(), p.end(), rng);
+        std::vector<int> p(256); //vector p of 256 values.
+        std::iota(p.begin(), p.end(), 0); // fill p with 0-255.
+        std::mt19937 rng(seed); // create RNG.
+        std::shuffle(p.begin(), p.end(), rng); //randomly swaps p.
         for (int i = 0; i < 512; ++i) {
             perm_[i] = p[i & 255];
         }
@@ -41,24 +47,19 @@ public:
         return lerp(x1, x2, v);
     }
 
-    // Fractal Brownian motion, normalized to approximately [-1, 1].
-    float fbm2D(float x, float z, int octaves, float lacunarity, float persistence) const {
+    // Fractal Brownian motion, normalized to approximately [-sumOctaves.amplitude, +sumOctaves.amplitude].
+    float fbm2D(float x, float z, const std::vector<Octave> octaves) const {
         float value = 0.0f;
-        float amplitude = 10.0f;
-        float frequency = 2.0f;
-        float norm = 0.0f;
 
-        for (int i = 0; i < octaves; ++i) {
-            value += noise2D(x * frequency, z * frequency) * amplitude;
-            norm += amplitude;
-            amplitude *= persistence;
-            frequency *= lacunarity;
+        for (int i = 0; i < octaves.size(); ++i) {
+            Octave currentOctave = octaves[i];
+            float octaveValue = noise2D(x * currentOctave.frequency, z * currentOctave.frequency) * currentOctave.amplitude;
+            if (octaveValue < 0){
+                octaveValue = octaveValue / (1.0f + (-octaveValue * currentOctave.floorFactor));
+            }
+            value += octaveValue;
         }
-
-        if (norm <= 0.0f) {
-            return 0.0f;
-        }
-        return value / norm;
+        return value;
     }
 
 private:
@@ -81,3 +82,5 @@ private:
 
     std::vector<int> perm_;
 };
+
+#endif
