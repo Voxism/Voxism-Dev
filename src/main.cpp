@@ -1780,6 +1780,7 @@ public:
 	}
 
 	void chunkrender(double deltaTime) {
+		frameDt_ = static_cast<float>(deltaTime);
 		chunkManager->updateChunks();
 	}
 
@@ -1991,7 +1992,11 @@ public:
 		}
 
 		if (shadowSettings_.enabled && shadowMap_.isReady()) {
-			if (chunkManager->isShadowMapsDirty() || chunkManager->hasPendingBufferUpdates()) {
+			const bool wantsShadowUpdate =
+				chunkManager->isShadowMapsDirty() || chunkManager->hasPendingBufferUpdates();
+			shadowUpdateTimer_ += frameDt_;
+			if (wantsShadowUpdate && shadowUpdateTimer_ >= kShadowUpdateInterval) {
+				shadowUpdateTimer_ = 0.0f;
 				shadowMap_.updateMatrices(P,
 				                          V,
 				                          camera->GetCameraPos(),
@@ -2322,6 +2327,9 @@ private:
 	PostProcessToggle postToggles_;
 	ShadowSettings shadowSettings_;
 	CascadedShadowMap shadowMap_;
+	static constexpr float kShadowUpdateInterval = 0.55f;
+	float shadowUpdateTimer_ = kShadowUpdateInterval;
+	float frameDt_ = 0.016f;
 
 	/** After this many seconds with no move input and low horizontal speed, idle avatar stops turning to face the camera (orbit to see front). Toggle with T. */
 	static constexpr float kIdleYawHoldSeconds = 2.0f;
