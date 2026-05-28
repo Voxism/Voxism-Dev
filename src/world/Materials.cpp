@@ -28,10 +28,10 @@ void Materials::init(GLuint bindingPoint){
         addMaterial(diffuse, roughness, metallic);
     };
 
-    // Grass
+    // Grass — warm yellow-green, more saturated than flat dark green
     addMaterial(
-        glm::vec4(0.11f, 0.40f, 0.11f, 1.0f),
-        0.55f,
+        glm::vec4(0.26f, 0.58f, 0.10f, 1.0f),
+        0.48f,
         0.0f
     );
     
@@ -138,7 +138,7 @@ const char *Materials::paletteName(int index)
 glm::vec3 Materials::paletteColor(int index)
 {
     static const glm::vec3 kColors[] = {
-        glm::vec3(0.10f, 0.30f, 0.10f),
+        glm::vec3(0.26f, 0.55f, 0.10f),
         glm::vec3(0.38f, 0.38f, 0.38f),
         glm::vec3(0.62f, 0.18f, 0.16f),
         glm::vec3(0.72f, 0.63f, 0.30f),
