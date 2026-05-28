@@ -10,6 +10,7 @@
 #include <deque>
 #include <thread>
 #include <atomic>
+#include <string>
 #include <glm/glm.hpp>
 #include "modifiers/IChunkModifier.h"
 #include "PerlinNoise.h"
@@ -65,6 +66,7 @@ class ChunkManager {
         // std::shared_ptr<Chunk> generateChunk(ChunkPos& chunkPos);
         std::shared_ptr<Chunk> getChunk(const ChunkPos &chunkPos) const;
         const TerrainGenerator& terrain() const { return *terrainGenerator; };
+        bool loadFloraAssets(const std::string &resourceDirectory);
 
 
         void generateChunks(glm::vec3 center);
@@ -100,7 +102,6 @@ class ChunkManager {
         ThreadPool chunkGenerationPool;
 
         PerlinNoise noise;
-
         std::shared_ptr<TerrainGenerator> terrainGenerator;
         std::deque<std::shared_ptr<Chunk>> occupancyUpdateQueue;
         std::deque<std::shared_ptr<Chunk>> meshUpdateQueue;

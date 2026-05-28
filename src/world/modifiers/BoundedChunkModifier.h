@@ -6,7 +6,7 @@
 
 class BoundedChunkModifier : public IChunkModifier {
 public:
-    void applyToChunk(Chunk &chunk, const ChunkPos &chunkPos) const final;
+    virtual void applyToChunk(Chunk &chunk, const ChunkPos &chunkPos) const override;
     void getTouchedChunkBounds(ChunkPos &minChunk, ChunkPos &maxChunk) const final;
     void getAffectedVoxelBounds(glm::ivec3 &minVoxel, glm::ivec3 &maxVoxel) const final;
     bool isFillOperation() const final { return fill_; }
