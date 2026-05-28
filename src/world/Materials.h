@@ -11,11 +11,15 @@
 #include "../Program.h"
 
 struct Material{
-    glm::vec4 ambient;
     glm::vec4 diffuse;
-    glm::vec4 specular;
-    float shininess;
-    float padding[3];
+    float roughness;
+    float metallic;
+    float paddnig[2];
+    // glm::vec4 ambient;
+    // glm::vec4 diffuse;
+    // glm::vec4 specular;
+    // float shininess;
+    // float padding[3];
 };
 
 class Materials {

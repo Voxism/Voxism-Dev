@@ -35,6 +35,7 @@
 #include "tools/ToolPreviewRenderer.h"
 #include "audio/SoundtrackPlayer.h"
 #include "particles/BreakParticleSystem.h"
+#include "rendering/CascadedShadowMap.h"
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_glfw.h>
@@ -219,6 +220,7 @@ public:
 	~Application()
 	{
 		teardownPostProcess();
+		shadowMap_.destroy();
 		if (groundTexGl_)
 			glDeleteTextures(1, &groundTexGl_);
 		ImGui_ImplOpenGL3_Shutdown();
@@ -265,8 +267,19 @@ public:
 		chunkProg_->addUniformBuffObj("materials", materialsBindingPoint);
 		chunkProg_->addUniform("matIDTex");
 		chunkProg_->addUniform("lightPos");
+		chunkProg_->addUniform("lightDir");
 		chunkProg_->addUniform("camPos");
 		chunkProg_->addUniform("lightColor");
+		chunkProg_->addUniform("shadowMap");
+		chunkProg_->addUniform("lightSpaceMatrices[0]");
+		chunkProg_->addUniform("cascadeEnds[0]");
+		chunkProg_->addUniform("cascadeCount");
+		chunkProg_->addUniform("shadowEnabled");
+		chunkProg_->addUniform("shadowMapSize");
+		chunkProg_->addUniform("shadowStrength");
+		chunkProg_->addUniform("minShadowVisibility");
+		chunkProg_->addUniform("shadowBlurTexels");
+		chunkProg_->addUniform("normalBiasVoxels");
 		chunkProg_->addAttribute("vertPos");
 		chunkProg_->addAttribute("normalID");
 
@@ -304,6 +317,7 @@ public:
 		fpvCamera.SetChunkManager(chunkManager.get());
 
 		initPostProcessShaders(resourceDirectory);
+		initShadowResources(resourceDirectory);
 
 		int fbW = 0, fbH = 0;
 		glfwGetFramebufferSize(windowManager->getHandle(), &fbW, &fbH);
@@ -403,6 +417,44 @@ public:
 			}
 		}
 		breakParticles_.spawnLandingBurst(feetPos, landing.fallHeight, chunkManager->voxSizeMeters, materialID);
+	}
+
+	glm::vec3 currentSunDirection() const
+	{
+		if (glm::dot(sunWorld_, sunWorld_) > 0.0001f) {
+			return glm::normalize(sunWorld_);
+		}
+		return glm::normalize(glm::vec3(0.35f, 0.85f, 0.25f));
+	}
+
+	void rotateSunAroundWorldY(float radians)
+	{
+		const float c = std::cos(radians);
+		const float s = std::sin(radians);
+		const float x = sunWorld_.x;
+		const float z = sunWorld_.z;
+		sunWorld_.x = x * c - z * s;
+		sunWorld_.z = x * s + z * c;
+	}
+
+	void initShadowResources(const string &resourceDirectory)
+	{
+		shadowDepthProg_ = make_shared<Program>();
+		shadowDepthProg_->setVerbose(true);
+		shadowDepthProg_->setShaderNames(shaderPath(resourceDirectory, "shadow", "chunk_depth_vert.glsl"),
+		                                 shaderPath(resourceDirectory, "shadow", "chunk_depth_frag.glsl"));
+		if (!shadowDepthProg_->init()) {
+			cerr << "shadowDepthProg failed — shadows disabled" << endl;
+			shadowSettings_.enabled = false;
+		} else {
+			shadowDepthProg_->addUniform("lightSpaceMatrix");
+			shadowDepthProg_->addAttribute("vertPos");
+		}
+
+		if (!shadowMap_.init(shadowSettings_.resolution, shadowSettings_.cascadeCount)) {
+			cerr << "shadowMap init failed — shadows disabled" << endl;
+			shadowSettings_.enabled = false;
+		}
 	}
 
 	void initPostProcessShaders(const string &resourceDirectory)
@@ -827,7 +879,10 @@ public:
 			}
 		}
 
-		camera->ProcessKeypress(key, action);
+		const bool sunTestKey = (key == GLFW_KEY_Q || key == GLFW_KEY_E);
+		if (!sunTestKey) {
+			camera->ProcessKeypress(key, action);
+		}
 
 		// if (key == GLFW_KEY_SPACE && action == GLFW_PRESS)
 		// 	player_.tryJump();
@@ -841,6 +896,10 @@ public:
 				keyA_ = down;
 			else if (k == GLFW_KEY_D)
 				keyD_ = down;
+			else if (k == GLFW_KEY_Q)
+				keySunLeft_ = down;
+			else if (k == GLFW_KEY_E)
+				keySunRight_ = down;
 		};
 
 		if (action == GLFW_PRESS)
@@ -869,6 +928,10 @@ public:
 		if (key == GLFW_KEY_O && action == GLFW_PRESS) {
 			postToggles_.ssaoEnabled = !postToggles_.ssaoEnabled;
 			cout << "[PostFX] SSAO: " << (postToggles_.ssaoEnabled ? "ON" : "OFF") << endl;
+		}
+		if (key == GLFW_KEY_0 && action == GLFW_PRESS) {
+			shadowSettings_.enabled = !shadowSettings_.enabled;
+			cout << "[Shadows] CSM: " << (shadowSettings_.enabled ? "ON" : "OFF") << endl;
 		}
 
 		if (action == GLFW_PRESS || action == GLFW_REPEAT) {
@@ -974,6 +1037,10 @@ public:
 			static_cast<float>(keyW_) - static_cast<float>(keyS_));
 		camera->UpdateCamera(dt);
 		animTime_ += dt;
+		const float sunTurnInput = static_cast<float>(keySunRight_) - static_cast<float>(keySunLeft_);
+		if (std::abs(sunTurnInput) > 0.0f) {
+			rotateSunAroundWorldY(sunTurnInput * sunRotateSpeedRadPerSec_ * dt);
+		}
 		const bool organicInUse =
 			toolManager_.supportsContinuousAction(ToolMode::Build) &&
 			(mouseLocked_ && (leftMouseDown_ || rightMouseDown_));
@@ -1005,14 +1072,65 @@ public:
 		toolView_.setMoveBlend(glm::clamp(glm::length(wish), 0.0f, 1.0f));
 	}
 
-	void drawScene3D(const mat4 &P, const mat4 &V)
+	void renderShadowPass()
+	{
+		if (!shadowSettings_.enabled || !shadowMap_.isReady() || !shadowDepthProg_) {
+			return;
+		}
+
+		shadowDepthProg_->bind();
+		shadowMap_.renderDepthPass([&](int cascadeIndex) {
+			glUniformMatrix4fv(shadowDepthProg_->getUniform("lightSpaceMatrix"),
+			                   1,
+			                   GL_FALSE,
+			                   value_ptr(shadowMap_.lightSpaceMatrix(cascadeIndex)));
+			Frustum lightFrustum(shadowMap_.lightProjection(cascadeIndex),
+			                     shadowMap_.lightView(cascadeIndex));
+			chunkManager->drawChunksForShadow(*shadowDepthProg_,
+			                                  shadowMap_.cascadeCenter(cascadeIndex),
+			                                  lightFrustum,
+			                                  shadowMap_.cascadeRadius(cascadeIndex) + chunkManager->chunkSizeMeters);
+		});
+		shadowDepthProg_->unbind();
+	}
+
+	void bindChunkShadowUniforms()
+	{
+		const bool shadowsActive = shadowSettings_.enabled && shadowMap_.isReady();
+		const int activeCascadeCount = shadowsActive ? shadowMap_.cascadeCount() : 0;
+
+		glUniform1i(chunkProg_->getUniform("shadowEnabled"), shadowsActive ? 1 : 0);
+		glUniform1i(chunkProg_->getUniform("cascadeCount"), activeCascadeCount);
+		glUniform1f(chunkProg_->getUniform("shadowMapSize"), static_cast<float>(std::max(1, shadowMap_.resolution())));
+		glUniform1f(chunkProg_->getUniform("shadowStrength"), shadowSettings_.shadowStrength);
+		glUniform1f(chunkProg_->getUniform("minShadowVisibility"), shadowSettings_.minShadowVisibility);
+		glUniform1f(chunkProg_->getUniform("shadowBlurTexels"), shadowSettings_.blurTexels);
+		glUniform1f(chunkProg_->getUniform("normalBiasVoxels"), shadowSettings_.normalBiasVoxels);
+
+		glActiveTexture(GL_TEXTURE4);
+		glBindTexture(GL_TEXTURE_2D_ARRAY, shadowsActive ? shadowMap_.depthTexture() : 0);
+		glUniform1i(chunkProg_->getUniform("shadowMap"), 4);
+
+		if (shadowsActive && activeCascadeCount > 0) {
+			glUniformMatrix4fv(chunkProg_->getUniform("lightSpaceMatrices[0]"),
+			                   activeCascadeCount,
+			                   GL_FALSE,
+			                   value_ptr(shadowMap_.lightSpaceMatrix(0)));
+			glUniform1fv(chunkProg_->getUniform("cascadeEnds[0]"),
+			             activeCascadeCount,
+			             shadowMap_.cascadeEnds().data());
+		}
+	}
+
+	void drawScene3D(const mat4 &P, const mat4 &V, const glm::vec3 &sunDir)
 	{
 		vec3 eye = camera->GetCameraPos();
 		mat4 Vsky = glm::mat4(glm::mat3(V));
 		// Frustum frustum = Frustum(P, V);
 		Frustum frustum = Frustum(P, fpvCamera.GetViewMatrix()); 
 
-		vec3 lightColor(1.0f, 0.98f, 0.92f);
+		// vec3 lightColor(1.4f, 1.35f, 1.25f);
+		vec3 lightColor(3.0);
 
 		// --- Chunk Drawing ---
 		chunkProg_->bind();
@@ -1021,8 +1139,10 @@ public:
 		glUniformMatrix4fv(chunkProg_->getUniform("V"), 1, GL_FALSE, value_ptr(V));
 		glUniformMatrix4fv(chunkProg_->getUniform("M"), 1, GL_FALSE, value_ptr(M));
 		glUniform3fv(chunkProg_->getUniform("lightPos"), 1, value_ptr(sunWorld_));
+		glUniform3fv(chunkProg_->getUniform("lightDir"), 1, value_ptr(sunDir));
 		glUniform3fv(chunkProg_->getUniform("camPos"), 1, value_ptr(eye));
 		glUniform3fv(chunkProg_->getUniform("lightColor"), 1, value_ptr(lightColor));
+		bindChunkShadowUniforms();
 		chunkManager->drawChunks(*chunkProg_, fpvCamera, frustum, frameNumber++);
 		chunkProg_->unbind();
 
@@ -1051,6 +1171,17 @@ public:
 		mat4 P = Pstack.topMatrix();
 		mat4 V = camera->GetViewMatrix();
 		Pstack.popMatrix();
+		const vec3 sunDir = currentSunDirection();
+
+		if (shadowSettings_.enabled && shadowMap_.isReady()) {
+			shadowMap_.updateMatrices(P,
+			                          V,
+			                          camera->GetCameraPos(),
+			                          sunDir,
+			                          shadowSettings_.shadowDistance,
+			                          chunkManager->voxSizeMeters);
+			renderShadowPass();
+		}
 
 		// --- Scene HDR framebuffer (brighter clear helps god-ray mask) ---
 		glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
@@ -1059,7 +1190,7 @@ public:
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		if (wireframe_)
 			glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-		drawScene3D(P, V);
+		drawScene3D(P, V, sunDir);
 		if (wireframe_)
 			glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1188,6 +1319,7 @@ public:
 					camera->GetCameraPos().x,
 					camera->GetCameraPos().y,
 					camera->GetCameraPos().z);
+		ImGui::Text("Sun Pos: %.2f %.2f %.2f", sunWorld_.x, sunWorld_.y, sunWorld_.z);
 		ImGui::Text("Tool: %s", toolManager_.activeToolName());
 		ImGui::Text("Material: %s", toolManager_.activeMaterialName());
 		if (toolManager_.activeToolUsesMeterRadius()) {
@@ -1199,6 +1331,10 @@ public:
 		ImGui::Checkbox("God Rays", &postToggles_.godRaysEnabled);
 		ImGui::Checkbox("Bloom", &postToggles_.bloomEnabled);
 		ImGui::Checkbox("SSAO", &postToggles_.ssaoEnabled);
+		ImGui::Checkbox("Shadows", &shadowSettings_.enabled);
+		ImGui::SliderFloat("Shadow Strength", &shadowSettings_.shadowStrength, 0.0f, 1.0f, "%.2f");
+		ImGui::SliderFloat("Shadow Softness", &shadowSettings_.blurTexels, 0.25f, 3.0f, "%.2f");
+		ImGui::SliderFloat("Shadow Min Light", &shadowSettings_.minShadowVisibility, 0.2f, 1.0f, "%.2f");
 
 		if (ImGui::SliderFloat("Music", &musicVolume_, 0.0f, 1.0f, "%.2f")) {
 			soundtrack_.setVolume(musicVolume_);
@@ -1232,6 +1368,7 @@ private:
 	shared_ptr<Program> texProg_;
 	shared_ptr<Program> godrayProg_, bloomBrightProg_, blurProg_, compositeProg_;
 	shared_ptr<Program> chunkProg_;
+	shared_ptr<Program> shadowDepthProg_;
 	shared_ptr<Program> ssaoProg_;
 	shared_ptr<Program> ssaoBlurProg_;
 	shared_ptr<Materials> materials = make_shared<Materials>();
@@ -1266,9 +1403,13 @@ private:
 	GameWorld world_;
 
 	bool keyW_ = false, keyS_ = false, keyA_ = false, keyD_ = false;
+	bool keySunLeft_ = false, keySunRight_ = false;
 	bool wireframe_ = false;
+	const float sunRotateSpeedRadPerSec_ = glm::radians(35.0f);
 
 	PostProcessToggle postToggles_;
+	ShadowSettings shadowSettings_;
+	CascadedShadowMap shadowMap_;
 
 	/** After this many seconds with no move input and low horizontal speed, idle avatar stops turning to face the camera (orbit to see front). Toggle with T. */
 	static constexpr float kIdleYawHoldSeconds = 2.0f;

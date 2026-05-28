@@ -14,11 +14,14 @@ flat out uint frag_normalID; // no need to interpolate since each vertex in a fa
 
 // interpolated outs
 out vec3 worldPos;
+out float viewDepth;
 
 void main()
 {
-    worldPos = (M*vec4(vertPos, 1.0)).xyz;
-    gl_Position = P*V*M*vec4(vertPos, 1.0); 
+    vec4 world = M * vec4(vertPos, 1.0);
+    worldPos = world.xyz;
+    viewDepth = -(V * world).z;
+    gl_Position = P * V * world;
     //normal = -vertNormal; 
     frag_normalID = normalID;
 }

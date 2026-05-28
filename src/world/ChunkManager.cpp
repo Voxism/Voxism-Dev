@@ -21,9 +21,9 @@ ChunkManager::ChunkManager(
     renderHeight(renderHeight),
     generationDistance(generationDistance),
     generationHeight(generationHeight),
-    noise(53310u),
     terrainMinChunks(0),
     terrainMaxChunks(0),
+    noise(53310u),
     occupancyUpdateQueue(),
     meshUpdateQueue(),
     occupancyUpdatePool(4),
@@ -520,6 +520,7 @@ void ChunkManager::generateChunks(glm::vec3 center){
                         for (int xVox = 0; xVox < sideVox; ++xVox) {
                             const float worldX = x*chunkSizeMeters + static_cast<float>(xVox) * voxSizeMeters;
                             heightMap[zVox * sideVox + xVox] = terrain().heightAt(worldX, worldZ);
+                            // std::cout << terrain().heightAt(0.01245f,1.324f) << std::endl;
                         }
                     }
                     
@@ -547,7 +548,7 @@ void ChunkManager::generateChunks(glm::vec3 center){
                                 const float totalTime = std::chrono::duration<float>(
                                     std::chrono::steady_clock::now() - startTime).count();
                                 (void)totalTime;
-                                std::cout << "ChunkGen (" << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << ") " << std::fixed << std::setprecision(4) << totalTime << "s" << std::endl;
+                                // std::cout << "ChunkGen (" << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << ") " << std::fixed << std::setprecision(4) << totalTime << "s" << std::endl;
                             }
                             {
                                 std::lock_guard<std::mutex> lockQueue(bufferQueueMutex);
@@ -651,5 +652,56 @@ void ChunkManager::drawChunks(const Program& prog, const FirstPersonCamera &fpc,
     // Culling empty Chunks:    261
     // Culling Occluded Chunks:  82
     // VFC:                     
-    std::cout << "Number of Draws: " << numberOfDraws << std::endl;
+    // std::cout << "Number of Draws: " << numberOfDraws << std::endl;
+}
+
+void ChunkManager::drawChunksForShadow(const Program& prog,
+    const glm::vec3 &center,
+    const Frustum& lightFrustum,
+    float radiusMeters)
+{
+    (void)lightFrustum;
+    if (radiusMeters <= 0.0f) {
+        return;
+    }
+
+    const ChunkPos minChunk = getChunkPos(center - glm::vec3(radiusMeters));
+    const ChunkPos maxChunk = getChunkPos(center + glm::vec3(radiusMeters));
+
+    for (int z = minChunk.z; z <= maxChunk.z; ++z) {
+        for (int y = minChunk.y; y <= maxChunk.y; ++y) {
+            for (int x = minChunk.x; x <= maxChunk.x; ++x) {
+                const ChunkPos cp{x, y, z};
+                std::shared_ptr<Chunk> chunkPtr = nullptr;
+                {
+                    std::lock_guard<std::mutex> lockMap(chunkMapMutex);
+                    auto it = chunkMap.find(cp);
+                    if (it != chunkMap.end()) {
+                        chunkPtr = it->second;
+                    }
+                }
+
+                if (!chunkPtr || !chunkPtr->isGenerated()) {
+                    continue;
+                }
+
+                const glm::vec3 chunkMin(
+                    cp.x * chunkSizeMeters,
+                    cp.y * chunkSizeMeters,
+                    cp.z * chunkSizeMeters);
+                const glm::vec3 chunkMax = chunkMin + glm::vec3(chunkSizeMeters);
+                const glm::vec3 chunkCenter = (chunkMin + chunkMax) * 0.5f;
+                const float chunkRadius = glm::length(glm::vec3(chunkSizeMeters * 0.5f));
+                const glm::vec3 toChunk = chunkCenter - center;
+                const float expandedRadius = radiusMeters + chunkRadius;
+                if (glm::dot(toChunk, toChunk) > expandedRadius * expandedRadius) {
+                    continue;
+                }
+                std::lock_guard<std::mutex> lock(chunkPtr->mutex);
+                if (!chunkPtr->isEmpty()) {
+                    chunkPtr->drawDepth(prog);
+                }
+            }
+        }
+    }
 }

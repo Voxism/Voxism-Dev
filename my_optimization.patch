@@ -1,0 +1,120 @@
+diff --git a/src/world/ChunkManager.cpp b/src/world/ChunkManager.cpp
+index 0b79e69..f538d7e 100644
+--- a/src/world/ChunkManager.cpp
++++ b/src/world/ChunkManager.cpp
+@@ -21,9 +21,9 @@ ChunkManager::ChunkManager(
+     renderHeight(renderHeight),
+     generationDistance(generationDistance),
+     generationHeight(generationHeight),
+-    noise(53310u),
+     terrainMinChunks(0),
+     terrainMaxChunks(0),
++    noise(53310u),
+     occupancyUpdateQueue(),
+     meshUpdateQueue(),
+     occupancyUpdatePool(4),
+@@ -509,7 +509,6 @@ void ChunkManager::generateChunks(glm::vec3 center){
+                         for (int xVox = 0; xVox < sideVox; ++xVox) {
+                             const float worldX = x*chunkSizeMeters + static_cast<float>(xVox) * voxSizeMeters;
+                             heightMap[zVox * sideVox + xVox] = terrain().heightAt(worldX, worldZ);
+-                            std::cout << terrain().heightAt(0.01245f,1.324f) << std::endl;
+                         }
+                     }
+                     
+@@ -645,48 +644,72 @@ void ChunkManager::drawChunksForShadow(const Program& prog,
+     const Frustum& lightFrustum,
+     float radiusMeters)
+ {
+-    (void)lightFrustum;
+     if (radiusMeters <= 0.0f) {
+         return;
+     }
+ 
++    // Conservative culling strategy:
++    //   1. Iterate the same camera-aligned cube around the cascade center
++    //      we used before (so we never expand into regions the original
++    //      code excluded ??? this preserves shadow coverage and prevents
++    //      shadows from disappearing at certain sun angles).
++    //   2. Keep the existing sphere test (radius + chunkRadius) so any
++    //      chunk that used to be drawn for this cascade is still drawn.
++    //   3. ADD a per-chunk light-frustum AABB cull. cullCube only returns
++    //      true when the AABB is fully outside the cascade's ortho box,
++    //      so this can never cull a chunk that actually contributes to
++    //      the shadow map. It eliminates the chunks inside the sphere
++    //      but outside the cascade's slab, which dominates the cost for
++    //      the larger cascades.
++    //   4. Snapshot chunkMap pointers once under a single lock instead of
++    //      taking the map mutex thousands of times per frame.
++
+     const ChunkPos minChunk = getChunkPos(center - glm::vec3(radiusMeters));
+     const ChunkPos maxChunk = getChunkPos(center + glm::vec3(radiusMeters));
++    const float chunkRadius = glm::length(glm::vec3(chunkSizeMeters * 0.5f));
++    const float expandedRadius = radiusMeters + chunkRadius;
++    const float expandedRadiusSq = expandedRadius * expandedRadius;
++
++    std::vector<ChunkPos> candidates;
++    candidates.reserve(64);
+ 
+     for (int z = minChunk.z; z <= maxChunk.z; ++z) {
+         for (int y = minChunk.y; y <= maxChunk.y; ++y) {
+             for (int x = minChunk.x; x <= maxChunk.x; ++x) {
+-                const ChunkPos cp{x, y, z};
+-                std::shared_ptr<Chunk> chunkPtr = nullptr;
+-                {
+-                    std::lock_guard<std::mutex> lockMap(chunkMapMutex);
+-                    auto it = chunkMap.find(cp);
+-                    if (it != chunkMap.end()) {
+-                        chunkPtr = it->second;
+-                    }
+-                }
+-
+-                if (!chunkPtr || !chunkPtr->isGenerated()) {
+-                    continue;
+-                }
+-
+                 const glm::vec3 chunkMin(
+-                    cp.x * chunkSizeMeters,
+-                    cp.y * chunkSizeMeters,
+-                    cp.z * chunkSizeMeters);
++                    x * chunkSizeMeters,
++                    y * chunkSizeMeters,
++                    z * chunkSizeMeters);
+                 const glm::vec3 chunkMax = chunkMin + glm::vec3(chunkSizeMeters);
+                 const glm::vec3 chunkCenter = (chunkMin + chunkMax) * 0.5f;
+-                const float chunkRadius = glm::length(glm::vec3(chunkSizeMeters * 0.5f));
+                 const glm::vec3 toChunk = chunkCenter - center;
+-                const float expandedRadius = radiusMeters + chunkRadius;
+-                if (glm::dot(toChunk, toChunk) > expandedRadius * expandedRadius) {
++                if (glm::dot(toChunk, toChunk) > expandedRadiusSq) {
+                     continue;
+                 }
+-                std::lock_guard<std::mutex> lock(chunkPtr->mutex);
+-                if (!chunkPtr->isEmpty()) {
+-                    chunkPtr->drawDepth(prog);
++                if (lightFrustum.cullCube(chunkMin, chunkMax)) {
++                    continue;
+                 }
++                candidates.push_back(ChunkPos{x, y, z});
++            }
++        }
++    }
++
++    std::vector<std::shared_ptr<Chunk>> chunksToDraw;
++    chunksToDraw.reserve(candidates.size());
++    {
++        std::lock_guard<std::mutex> lockMap(chunkMapMutex);
++        for (const ChunkPos &cp : candidates) {
++            auto it = chunkMap.find(cp);
++            if (it != chunkMap.end() && it->second && it->second->isGenerated()) {
++                chunksToDraw.push_back(it->second);
+             }
+         }
+     }
++
++    for (const auto &chunkPtr : chunksToDraw) {
++        std::lock_guard<std::mutex> lock(chunkPtr->mutex);
++        if (!chunkPtr->isEmpty()) {
++            chunkPtr->drawDepth(prog);
++        }
++    }
+ }
