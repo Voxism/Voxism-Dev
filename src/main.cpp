@@ -204,10 +204,10 @@ SunProjection projectSunToScreen(const glm::mat4& P, const glm::mat4& V,
 } // namespace
 
 struct PostProcessToggle {
-    bool godRaysEnabled  = false;
+    bool godRaysEnabled  = true;
     bool bloomEnabled    = false;
     bool ssaoEnabled     = true;
-    float godrayStrength = 1.35f;
+    float godrayStrength = 0.8f;
     float bloomStrength  = 1.6f;
     float ssaoRadius     = 0.75f;
     float ssaoBias       = 0.025f;
@@ -481,6 +481,8 @@ public:
 		if (!shadowMap_.init(shadowSettings_.resolution, shadowSettings_.cascadeCount)) {
 			cerr << "shadowMap init failed — shadows disabled" << endl;
 			shadowSettings_.enabled = false;
+		} else {
+			chunkManager->markShadowMapsDirty();
 		}
 	}
 
@@ -958,6 +960,9 @@ public:
 		}
 		if (key == GLFW_KEY_0 && action == GLFW_PRESS) {
 			shadowSettings_.enabled = !shadowSettings_.enabled;
+			if (shadowSettings_.enabled) {
+				chunkManager->markShadowMapsDirty();
+			}
 			cout << "[Shadows] CSM: " << (shadowSettings_.enabled ? "ON" : "OFF") << endl;
 		}
 
@@ -1067,6 +1072,7 @@ public:
 		const float sunTurnInput = static_cast<float>(keySunRight_) - static_cast<float>(keySunLeft_);
 		if (std::abs(sunTurnInput) > 0.0f) {
 			rotateSunAroundWorldY(sunTurnInput * sunRotateSpeedRadPerSec_ * dt);
+			chunkManager->markShadowMapsDirty();
 		}
 		const bool organicInUse =
 			toolManager_.supportsContinuousAction(ToolMode::Build) &&
@@ -1204,13 +1210,18 @@ public:
 		const vec3 sunDir = currentSunDirection();
 
 		if (shadowSettings_.enabled && shadowMap_.isReady()) {
-			shadowMap_.updateMatrices(P,
-			                          V,
-			                          camera->GetCameraPos(),
-			                          sunDir,
-			                          shadowSettings_.shadowDistance,
-			                          chunkManager->voxSizeMeters);
-			renderShadowPass();
+			if (chunkManager->isShadowMapsDirty() || chunkManager->hasPendingBufferUpdates()) {
+				shadowMap_.updateMatrices(P,
+				                          V,
+				                          camera->GetCameraPos(),
+				                          sunDir,
+				                          shadowSettings_.shadowDistance,
+				                          chunkManager->voxSizeMeters);
+				renderShadowPass();
+				if (!chunkManager->hasPendingBufferUpdates()) {
+					chunkManager->clearShadowMapsDirty();
+				}
+			}
 		}
 
 		// --- Scene HDR framebuffer (brighter clear helps god-ray mask) ---
@@ -1362,7 +1373,15 @@ public:
 		ImGui::Checkbox("God Rays", &postToggles_.godRaysEnabled);
 		ImGui::Checkbox("Bloom", &postToggles_.bloomEnabled);
 		ImGui::Checkbox("SSAO", &postToggles_.ssaoEnabled);
-		ImGui::Checkbox("Shadows", &shadowSettings_.enabled);
+		{
+			bool shadowsEnabled = shadowSettings_.enabled;
+			if (ImGui::Checkbox("Shadows", &shadowsEnabled)) {
+				if (shadowsEnabled) {
+					chunkManager->markShadowMapsDirty();
+				}
+				shadowSettings_.enabled = shadowsEnabled;
+			}
+		}
 		ImGui::SliderFloat("Shadow Strength", &shadowSettings_.shadowStrength, 0.0f, 1.0f, "%.2f");
 		ImGui::SliderFloat("Shadow Softness", &shadowSettings_.blurTexels, 0.25f, 3.0f, "%.2f");
 		ImGui::SliderFloat("Shadow Min Light", &shadowSettings_.minShadowVisibility, 0.2f, 1.0f, "%.2f");
@@ -1407,7 +1426,7 @@ private:
 	shared_ptr<ChunkManager> chunkManager = make_shared<ChunkManager>(
 	16,// voxPerMeter 
 	8,// chunkSizeMeters
-	32,// renderDistance (in meters)
+	48,// renderDistance (in meters)
 	16,// renderHeight (int meters)
 	32,// generationDistance (in meters)
 	64 // generationHeight (in meters)

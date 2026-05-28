@@ -435,7 +435,32 @@ ChunkEditSummary ChunkManager::modifyChunks(const std::shared_ptr<IChunkModifier
             }
         }
     }
+
+    if (summary.valid) {
+        shadowMapsDirty_ = true;
+    }
     return summary;
+}
+
+void ChunkManager::markShadowMapsDirty()
+{
+    shadowMapsDirty_ = true;
+}
+
+bool ChunkManager::isShadowMapsDirty() const
+{
+    return shadowMapsDirty_.load();
+}
+
+void ChunkManager::clearShadowMapsDirty()
+{
+    shadowMapsDirty_ = false;
+}
+
+bool ChunkManager::hasPendingBufferUpdates() const
+{
+    std::lock_guard<std::mutex> lock(bufferQueueMutex);
+    return !bufferUpdateQueue.empty();
 }
 
 // Called by the main thread.
