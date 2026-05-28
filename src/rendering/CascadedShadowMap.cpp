@@ -250,6 +250,8 @@ void CascadedShadowMap::renderDepthPass(const std::function<void(int cascadeInde
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(2.0f, 4.0f);
     glDrawBuffer(GL_NONE);
     glReadBuffer(GL_NONE);
 
@@ -266,6 +268,7 @@ void CascadedShadowMap::renderDepthPass(const std::function<void(int cascadeInde
     } else {
         glDisable(GL_CULL_FACE);
     }
+    glDisable(GL_POLYGON_OFFSET_FILL);
     glBindFramebuffer(GL_FRAMEBUFFER, previousFbo);
     glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
 }

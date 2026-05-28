@@ -928,6 +928,10 @@ public:
 			postToggles_.ssaoEnabled = !postToggles_.ssaoEnabled;
 			cout << "[PostFX] SSAO: " << (postToggles_.ssaoEnabled ? "ON" : "OFF") << endl;
 		}
+		if (key == GLFW_KEY_0 && action == GLFW_PRESS) {
+			shadowSettings_.enabled = !shadowSettings_.enabled;
+			cout << "[Shadows] CSM: " << (shadowSettings_.enabled ? "ON" : "OFF") << endl;
+		}
 
 		if (action == GLFW_PRESS || action == GLFW_REPEAT) {
 			if (key == GLFW_KEY_LEFT) {

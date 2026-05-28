@@ -83,6 +83,23 @@ float tentWeight(int offset)
     return 3.0 - abs(float(offset));
 }
 
+float computeShadowDepthBias(vec3 N, vec3 L, float texelSize)
+{
+    float ndotl = max(dot(N, L), 0.0001);
+    float slope = sqrt(clamp(1.0 - ndotl * ndotl, 0.0, 1.0)) / ndotl;
+
+    // Base bias in light-space depth; slope term reduces acne on grazing faces.
+    float bias = 0.0003 + 0.002 * slope;
+
+    // Wider PCF kernels sample across depth discontinuities — scale bias with filter radius.
+    bias += texelSize * 2.5;
+
+    // Voxel-sized guard band so block faces don't self-shadow in the penumbra.
+    bias += normalBiasVoxels * voxelSizeMeters * 0.004;
+
+    return bias;
+}
+
 float sampleShadowCascade(int cascade, vec3 receiver, vec3 N, vec3 L, out bool valid)
 {
     valid = false;
@@ -102,8 +119,8 @@ float sampleShadowCascade(int cascade, vec3 receiver, vec3 N, vec3 L, out bool v
     valid = true;
 
     float currentDepth = proj.z;
-    float depthBias = max(0.00035 * (1.0 - dot(N, L)), 0.00008);
     float texel = shadowBlurTexels / shadowMapSize;
+    float depthBias = computeShadowDepthBias(N, L, texel);
     float lit = 0.0;
     float weightSum = 0.0;
 

@@ -9,13 +9,13 @@
 #include <glm/glm.hpp>
 
 struct ShadowSettings {
-    bool enabled = true;
+    bool enabled = false;
     int cascadeCount = 3;
     int resolution = 2048;
     float shadowDistance = 64.0f;
-    float shadowStrength = 0.55f;
-    float minShadowVisibility = 0.45f;
-    float blurTexels = 1.5f;
+    float shadowStrength = 1.0f;
+    float minShadowVisibility = 0.2f;
+    float blurTexels = 1.85f;
     float normalBiasVoxels = 1.25f;
 };
 
