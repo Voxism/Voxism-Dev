@@ -164,6 +164,12 @@ void Chunk::setMaterialLocal(int x, int y, int z, uint8_t materialID)
     markMaterialDirtyCell(texX, texY, texZ);
 }
 
+void Chunk::copySaveData(std::vector<uint32_t> &occupancyWords, std::vector<uint8_t> &materialTexels) const
+{
+    occupancyWords = occupancyInts;
+    materialTexels = cTexData;
+}
+
 void Chunk::uploadDirtyMaterialRegion()
 {
     if (!materialDirty_ || cTexData.empty()) {

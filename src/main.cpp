@@ -12,8 +12,13 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <random>
+#include <thread>
 #include <vector>
+#include <deque>
+#include <condition_variable>
+#include <atomic>
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -33,6 +38,8 @@
 #include "WindowManager.h"
 #include "world/ChunkManager.h"
 #include "world/Materials.h"
+#include "world/WorldFileIO.h"
+#include "world/modifiers/DenseChunkModifier.h"
 #include "Tool.h"
 #include "Crosshair.h"
 #include "tools/ToolManager.h"
@@ -240,12 +247,27 @@ struct PostProcessToggle {
     float ssaoIntensity  = 1.0f;
 };
 
+struct WorldLoadState {
+	std::mutex mutex;
+	std::condition_variable cv;
+	std::deque<std::shared_ptr<IChunkModifier>> queuedModifiers;
+	std::thread worker;
+	bool active = false;
+	bool stopRequested = false;
+	bool doneReading = false;
+	std::size_t queuedChunkCount = 0;
+	std::size_t appliedChunkCount = 0;
+	std::size_t totalChunkCount = 0;
+	std::string lastError;
+};
+
 class Application : public EventCallbacks {
 public:
 	WindowManager *windowManager = nullptr;
 
 	~Application()
 	{
+		stopWorldLoadWorker();
 		teardownPostProcess();
 		shadowMap_.destroy();
 		if (groundTexGl_)
@@ -427,6 +449,175 @@ public:
 				const string pathP = resourceDirectory + "/sfx/place/stone" + std::to_string(i) + ".ogg";
 				if (soundtrack_.loadSfx(idB, pathB)) breakSfxIds_.push_back(idB);
 				if (soundtrack_.loadSfx(idP, pathP)) placeSfxIds_.push_back(idP);
+			}
+		}
+	}
+
+	std::string worldSavePath() const
+	{
+		return "world.bin";
+	}
+
+	void stopWorldLoadWorker()
+	{
+		{
+			std::lock_guard<std::mutex> lock(worldLoadState_.mutex);
+			worldLoadState_.stopRequested = true;
+			worldLoadState_.cv.notify_all();
+		}
+		if (worldLoadState_.worker.joinable()) {
+			worldLoadState_.worker.join();
+		}
+		{
+			std::lock_guard<std::mutex> lock(worldLoadState_.mutex);
+			worldLoadState_.active = false;
+			worldLoadState_.doneReading = true;
+			worldLoadState_.queuedModifiers.clear();
+		}
+		if (worldSaveThread_.joinable()) {
+			worldSaveThread_.join();
+		}
+	}
+
+	void startWorldSave()
+	{
+		if (worldSaveActive_.exchange(true)) {
+			cout << "World save already running." << endl;
+			return;
+		}
+		if (worldSaveThread_.joinable()) {
+			worldSaveThread_.join();
+		}
+		{
+			std::lock_guard<std::mutex> lock(worldSaveMutex_);
+			worldSaveStatus_ = "Saving world...";
+		}
+		worldSaveThread_ = std::thread([this]() {
+			std::string error;
+			const bool ok = WorldFileIO::saveToFile(worldSavePath(), *chunkManager, error);
+			std::lock_guard<std::mutex> lock(worldSaveMutex_);
+			if (ok) {
+				worldSaveStatus_ = "World saved to " + worldSavePath();
+			} else {
+				worldSaveStatus_ = "World save failed: " + error;
+			}
+			worldSaveActive_.store(false);
+		});
+	}
+
+	void startWorldLoad()
+	{
+		if (worldSaveActive_.load()) {
+			cout << "World save already running." << endl;
+			return;
+		}
+		stopWorldLoadWorker();
+		std::lock_guard<std::mutex> lock(worldLoadState_.mutex);
+		if (worldLoadState_.active) {
+			cout << "World load already running." << endl;
+			return;
+		}
+		worldLoadState_.active = true;
+		worldLoadState_.stopRequested = false;
+		worldLoadState_.doneReading = false;
+		worldLoadState_.queuedChunkCount = 0;
+		worldLoadState_.appliedChunkCount = 0;
+		worldLoadState_.totalChunkCount = 0;
+		worldLoadState_.lastError.clear();
+		worldLoadState_.queuedModifiers.clear();
+		worldLoadStatus_ = "Loading world...";
+		{
+			std::string error;
+			std::size_t totalChunks = 0;
+			if (WorldFileIO::readChunkCountFromFile(worldSavePath(), totalChunks, error)) {
+				worldLoadState_.totalChunkCount = totalChunks;
+			} else {
+				worldLoadState_.active = false;
+				worldLoadState_.doneReading = true;
+				worldLoadState_.lastError = error;
+				worldLoadStatus_ = "World load failed: " + error;
+				return;
+			}
+		}
+		worldLoadState_.worker = std::thread([this]() {
+			std::string error;
+			std::size_t totalChunks = 0;
+			const bool ok = WorldFileIO::streamModifiersFromFile(
+				worldSavePath(),
+				[this](std::shared_ptr<IChunkModifier> modifier) {
+					std::unique_lock<std::mutex> lock(worldLoadState_.mutex);
+					worldLoadState_.cv.wait(lock, [this]() {
+						return worldLoadState_.stopRequested ||
+							worldLoadState_.queuedModifiers.size() < kMaxQueuedLoadModifiers_;
+					});
+					if (worldLoadState_.stopRequested) {
+						return false;
+					}
+					worldLoadState_.queuedModifiers.push_back(std::move(modifier));
+					++worldLoadState_.queuedChunkCount;
+					lock.unlock();
+					worldLoadState_.cv.notify_all();
+					return true;
+				},
+				error,
+				&totalChunks);
+
+			std::lock_guard<std::mutex> lock(worldLoadState_.mutex);
+			worldLoadState_.doneReading = true;
+			if (!ok && !worldLoadState_.stopRequested) {
+				worldLoadState_.lastError = error;
+			}
+			worldLoadState_.cv.notify_all();
+		});
+	}
+
+	void processWorldLoadQueue()
+	{
+		std::size_t processed = 0;
+		while (processed < kLoadModifiersPerStep_) {
+			std::shared_ptr<IChunkModifier> modifier;
+			{
+				std::lock_guard<std::mutex> lock(worldLoadState_.mutex);
+				if (worldLoadState_.queuedModifiers.empty()) {
+					if (worldLoadState_.doneReading) {
+						worldLoadState_.active = false;
+					}
+					break;
+				}
+				modifier = worldLoadState_.queuedModifiers.front();
+				worldLoadState_.queuedModifiers.pop_front();
+				worldLoadState_.cv.notify_all();
+			}
+
+			std::shared_ptr<DenseChunkModifier> denseModifier =
+				std::dynamic_pointer_cast<DenseChunkModifier>(modifier);
+			if (denseModifier) {
+				chunkManager->ensureChunkExists(denseModifier->chunkPos());
+			}
+			chunkManager->modifyChunks(modifier);
+			++processed;
+			{
+				std::lock_guard<std::mutex> lock(worldLoadState_.mutex);
+				++worldLoadState_.appliedChunkCount;
+			}
+		}
+
+		bool shouldJoin = false;
+		{
+			std::lock_guard<std::mutex> lock(worldLoadState_.mutex);
+			shouldJoin = !worldLoadState_.active &&
+				worldLoadState_.doneReading &&
+				worldLoadState_.queuedModifiers.empty();
+		}
+		if (shouldJoin) {
+			if (worldLoadState_.worker.joinable()) {
+				worldLoadState_.worker.join();
+			}
+			std::lock_guard<std::mutex> lock(worldLoadState_.mutex);
+			if (!worldLoadState_.lastError.empty()) {
+				worldLoadStatus_ = "World load failed: " + worldLoadState_.lastError;
+			} else {
+				worldLoadStatus_ = "World load complete.";
 			}
 		}
 	}
@@ -1193,6 +1384,12 @@ public:
 		if (key == GLFW_KEY_F3 && action == GLFW_PRESS) {
 			showDebugWindow_ = !showDebugWindow_;
 		}
+		if (key == GLFW_KEY_F5 && action == GLFW_PRESS) {
+			startWorldSave();
+		}
+		if (key == GLFW_KEY_F9 && action == GLFW_PRESS) {
+			startWorldLoad();
+		}
 
 		if (key == GLFW_KEY_2 && action == GLFW_PRESS) {
 			pickLookedAtMaterial();
@@ -1355,6 +1552,8 @@ public:
 
 	void updateFixedStep(float dt)
 	{
+		processWorldLoadQueue();
+
 		const bool radialMenuOpen = anySelectorOpen();
 		vec2 wish = radialMenuOpen
 			? vec2(0.0f)
@@ -1548,7 +1747,7 @@ public:
 		ImDrawList *drawList = ImGui::GetForegroundDrawList();
 		ImFont *font = hudFont_ ? hudFont_ : ImGui::GetFont();
 		const float panelWidth = std::min(640.0f, std::max(430.0f, static_cast<float>(width) - 36.0f));
-		const float panelHeight = 64.0f;
+		const float panelHeight = 92.0f;
 		const ImVec2 panelMin(18.0f, 18.0f);
 		const ImVec2 panelMax(panelMin.x + panelWidth, panelMin.y + panelHeight);
 
@@ -1602,6 +1801,34 @@ public:
 				const float alpha = (i <= activeIndex) ? 0.82f : 0.20f;
 				drawList->AddRectFilled(ImVec2(x, meterY - 1.0f), ImVec2(x + 8.0f, meterY + 7.0f), uiRgba(244, 249, 249, alpha), 2.0f);
 			}
+		}
+
+		std::string saveStatus;
+		{
+			std::lock_guard<std::mutex> lock(worldSaveMutex_);
+			saveStatus = worldSaveStatus_;
+		}
+		std::string loadStatus = worldLoadStatus_;
+		{
+			std::lock_guard<std::mutex> lock(worldLoadState_.mutex);
+			if (worldLoadState_.active || !worldLoadState_.lastError.empty()) {
+				char progressBuffer[128];
+				snprintf(progressBuffer,
+				         sizeof(progressBuffer),
+				         "Load %zu/%zu queued %zu",
+				         worldLoadState_.appliedChunkCount,
+				         worldLoadState_.totalChunkCount,
+				         worldLoadState_.queuedModifiers.size());
+				loadStatus = progressBuffer;
+			}
+		}
+		const std::string statusText = !loadStatus.empty() ? loadStatus : saveStatus;
+		if (!statusText.empty()) {
+			drawList->AddLine(ImVec2(panelMin.x + 14.0f, panelMin.y + 66.0f),
+			                  ImVec2(panelMax.x - 14.0f, panelMin.y + 66.0f),
+			                  uiRgba(255, 255, 255, 0.10f),
+			                  1.0f);
+			drawList->AddText(font, 14.0f, ImVec2(panelMin.x + 18.0f, panelMin.y + 71.0f), labelColor, statusText.c_str());
 		}
 	}
 
@@ -1905,6 +2132,14 @@ private:
 	std::vector<std::string> breakSfxIds_;
 	std::vector<std::string> placeSfxIds_;
 	std::mt19937 sfxRng_{std::random_device{}()};
+	WorldLoadState worldLoadState_;
+	std::thread worldSaveThread_;
+	std::atomic<bool> worldSaveActive_{false};
+	std::mutex worldSaveMutex_;
+	std::string worldSaveStatus_;
+	std::string worldLoadStatus_;
+	static constexpr std::size_t kMaxQueuedLoadModifiers_ = 8;
+	static constexpr std::size_t kLoadModifiersPerStep_ = 4;
 };
 
 int main(int argc, char *argv[])

@@ -58,6 +58,7 @@ class Chunk
         uint8_t getMaterialLocalUnlocked(int x, int y, int z) const;
         void setOccupiedLocal(int x, int y, int z, bool occupied);
         void setMaterialLocal(int x, int y, int z, uint8_t materialID);
+        void copySaveData(std::vector<uint32_t> &occupancyWords, std::vector<uint8_t> &materialTexels) const;
 
         const ChunkPos &getChunkPos() const { return cp; }
         int getLocalVoxelSizeX() const;
