@@ -523,8 +523,31 @@ void ChunkManager::generateChunks(glm::vec3 center){
                             // std::cout << terrain().heightAt(0.01245f,1.324f) << std::endl;
                         }
                     }
-                    
-                    
+                    // Queue world decorations before the initial occupancy pass so
+                    // they are baked into first-time chunk generation instead of
+                    // appearing later when another edit triggers an update.
+                    for (int i = 0; i < 2; i++){
+                        // A random Coordinate
+                        float chunkX = (rand()/(float)RAND_MAX)*chunkSizeMeters;
+                        float chunkZ = (rand()/(float)RAND_MAX)*chunkSizeMeters;
+                        float worldX = x*chunkSizeMeters+chunkX;
+                        float worldZ = z*chunkSizeMeters+chunkZ;
+                        float frequency = 0.04;
+                        float regionalChance = glm::max(0.0f, (noise.noise2D(worldX*frequency, worldZ*frequency)+3)/4);
+                        float individualChance = (rand()/(float)RAND_MAX);
+                        if (regionalChance * individualChance > 0.70){
+                        // if (regionalChance * individualChance > 0.30){
+                            std::vector<shared_ptr<IChunkModifier>> rocks = terrainGenerator->generateRocks(worldX, heightMap[glm::floor(chunkZ*voxPerMeter) * sideVox + glm::floor(chunkX*voxPerMeter)], worldZ, 3, *this);
+                            for (auto rock : rocks){
+                                modifyChunks(rock);
+                            }
+                        }
+                    }
+                    std::vector<shared_ptr<IChunkModifier>> flora = terrainGenerator->generateFlora(x, z, heightMap, *this);
+                    for (auto &feature : flora) {
+                        modifyChunks(feature);
+                    }
+
                     // For each chunk use height map
                     for (int y=-height; y<height; y++){
                         
@@ -555,29 +578,6 @@ void ChunkManager::generateChunks(glm::vec3 center){
                                 bufferUpdateQueue.push_back(chunkPtr);
                             }
                         }
-                    }
-
-                    // After chunks are generated add rocks and features.
-                    for (int i = 0; i < 2; i++){
-                        // A random Coordinate
-                        float chunkX = (rand()/(float)RAND_MAX)*chunkSizeMeters;
-                        float chunkZ = (rand()/(float)RAND_MAX)*chunkSizeMeters;
-                        float worldX = x*chunkSizeMeters+chunkX;
-                        float worldZ = z*chunkSizeMeters+chunkZ;
-                        float frequency = 0.04;
-                        float regionalChance = glm::max(0.0f, (noise.noise2D(worldX*frequency, worldZ*frequency)+3)/4);
-                        float individualChance = (rand()/(float)RAND_MAX);
-                        if (regionalChance * individualChance > 0.70){
-                        // if (regionalChance * individualChance > 0.30){
-                            std::vector<shared_ptr<IChunkModifier>> rocks = terrainGenerator->generateRocks(worldX, heightMap[glm::floor(chunkZ*voxPerMeter) * sideVox + glm::floor(chunkX*voxPerMeter)], worldZ, 3, *this);
-                            for (auto rock : rocks){
-                                modifyChunks(rock);
-                            }
-                        }
-                    }
-                    std::vector<shared_ptr<IChunkModifier>> flora = terrainGenerator->generateFlora(x, z, heightMap, *this);
-                    for (auto &feature : flora) {
-                        modifyChunks(feature);
                     }
                 });
             }
