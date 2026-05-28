@@ -1,0 +1,2 @@
+WARN: chunkSizeMeters cannot be bound (it either doesn't exist or has been optimized away). safe_glUniform calls will silently ignore it.
+
