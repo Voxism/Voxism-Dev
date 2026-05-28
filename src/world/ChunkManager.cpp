@@ -1,10 +1,12 @@
 #include "ChunkManager.h"
+#include "TerrainGenerator.h"
 
 #include <chrono>
 #include <cmath>
 #include <limits>
 
 #include "VoxelMath.h"
+#include "Octave.h"
 
 ChunkManager::ChunkManager(
     int voxPerMeter,
@@ -19,13 +21,15 @@ ChunkManager::ChunkManager(
     renderHeight(renderHeight),
     generationDistance(generationDistance),
     generationHeight(generationHeight),
+    noise(53310u),
     terrainMinChunks(0),
     terrainMaxChunks(0),
     occupancyUpdateQueue(),
     meshUpdateQueue(),
     occupancyUpdatePool(4),
     meshUpdatePool(4),
-    bufferUpdatePool(4)
+    bufferUpdatePool(4),
+    chunkGenerationPool(2)
 {
     // Calculations for voxel and chunk sizes
     voxSizeMeters = 1.0f/voxPerMeter; // in meters.
@@ -39,8 +43,17 @@ ChunkManager::ChunkManager(
     occupancyYsize = occupancyZsize = chunkSizeInts*32;
     terrainMinChunks = static_cast<int>(-renderHeight / this->chunkSizeMeters);
     terrainMaxChunks = static_cast<int>(renderHeight / this->chunkSizeMeters);
-    terrainGenerator = std::make_unique<TerrainGenerator>(terrainMinChunks, terrainMaxChunks, this->chunkSizeMeters, 1337u);
+    std::vector<Octave> octaves;
+    octaves.push_back(Octave{0.005f, 30.0f, 4.0f});
+    octaves.push_back(Octave{0.04f, 5.0f, 1.0f});
+    octaves.push_back(Octave{0.04f, 5.0f, 1.0f});
+    octaves.push_back(Octave{0.02f, 7.0f, 1.0f});
+    octaves.push_back(Octave{0.3f, 0.35f, 0.5f});
+    octaves.push_back(Octave{0.6f, 0.15f, 0.5f});
+    octaves.push_back(Octave{3.0f, 0.07f, 0.0f});
+    terrainGenerator = std::make_unique<TerrainGenerator>(terrainMinChunks, terrainMaxChunks, this->chunkSizeMeters, octaves, 1337u);
 };
+ChunkManager::~ChunkManager() = default;
 
 ChunkPos ChunkManager::getChunkPos(const glm::vec3& pos) const{
     // This math keeps the chunk position rounded down even if negative.
@@ -310,8 +323,9 @@ void ChunkManager::modifyChunks(const std::shared_ptr<IChunkModifier> &chunkMod)
                     continue;
                 }
                 {
-                    std::lock_guard<std::mutex> lock(chunk->mutex);
+                    // std::lock_guard<std::mutex> lock(chunk->mutex);
                     if (!chunk->isGenerated()) {
+                        chunk->queueModifier(chunkMod);
                         continue;
                     }
                 }
@@ -345,62 +359,46 @@ void ChunkManager::updateChunks(){
 
 template<typename Func>
 void ChunkManager::forEachChunkInGenerationDistance(glm::vec3 center, Func func){
-    int x = center.x/chunkSizeMeters;
-    int z = center.z/chunkSizeMeters;
+    int x = glm::floor(center.x/chunkSizeMeters);
+    int z = glm::floor(center.z/chunkSizeMeters);
 
-    // checks each chunk in a vertical slice. if it doesn't exist then generate it.
-    auto forSlice = [&](int x, int z, auto func){
-        int height = generationHeight/chunkSizeMeters; 
-        for (int y=-height; y<height; y++){
-            ChunkPos chunkPos = ChunkPos{x, y, z};
-            func(chunkPos);
-        }
-    };
-    
-    // Attempt to generate the current chunk.
-    forSlice(x, z, func);
-    // Generate chunks in concentric rings around the player.
     int maxDistance = generationDistance/chunkSizeInts;
-    for (int distance = 1; distance < maxDistance; distance++){
-        int dx = -distance;
-        int dz = -distance;
-        // -z wall
-        while(dx<distance){
-            dx++;
-            forSlice(x+dx, z+dz, func);
-        }
-        // +x wall
-        while(dz<distance){
-            dz++;
-            forSlice(x+dx, z+dz, func);
-        }
-        // +Z wall
-        while(dx>-distance){
-            dx--;
-            forSlice(x+dx, z+dz, func);
-        }
-        // -x wall
-        while(dz>-distance){
-            dz--;
-            forSlice(x+dx, z+dz, func);
-        }
+    for (int distance = 0; distance < maxDistance; distance++){
+        for (int dz = -distance; dz <= distance; dz++) {
+        for (int dx = -distance; dx <= distance; dx++) {
+    
+            bool edge =
+                dx == -distance ||
+                dx == distance ||
+                dz == -distance ||
+                dz == distance;
+    
+            if (edge)
+                func(x + dx, z + dz);
+        }}
     }
 }
 
 void ChunkManager::generateChunks(glm::vec3 center){
+
     // Create Chunks and Bind Chunks (main Thread)
     forEachChunkInGenerationDistance(
         center, 
-        [&](ChunkPos chunkPos){
-            std::lock_guard<std::mutex> lockMap(chunkMapMutex);
-            auto chunk = chunkMap.find(chunkPos);
-            if (chunk == chunkMap.end())
-            {
-                // Make, bind, insert.
-                std::shared_ptr<Chunk> newChunk = std::make_shared<Chunk>(*this, chunkPos);
-                std::lock_guard<std::mutex> lock(newChunk->mutex);
-                newChunk->bindMesh();
-                chunkMap[chunkPos] = newChunk;
+        [&](int x, int z)
+        {
+            int height = generationHeight/chunkSizeMeters; 
+            for (int y=-height; y<height; y++){
+                ChunkPos chunkPos = ChunkPos{x, y, z};
+                std::lock_guard<std::mutex> lockMap(chunkMapMutex);
+                auto chunk = chunkMap.find(chunkPos);
+                if (chunk == chunkMap.end())
+                {
+                    // Make, bind, insert.
+                    std::shared_ptr<Chunk> newChunk = std::make_shared<Chunk>(*this, chunkPos);
+                    std::lock_guard<std::mutex> lock(newChunk->mutex);
+                    newChunk->bindMesh();
+                    chunkMap[chunkPos] = newChunk;
+                }
             }
         }
     );
@@ -408,33 +406,74 @@ void ChunkManager::generateChunks(glm::vec3 center){
     std::thread([&, center]() {
         forEachChunkInGenerationDistance(
             center, 
-            [&](ChunkPos chunkPos)
-            {
-                std::shared_ptr<Chunk> chunkPtr = nullptr;
-                {
-                    std::lock_guard<std::mutex> lockMap(chunkMapMutex);
-                    auto chunk = chunkMap.find(chunkPos);
-                    if (chunk != chunkMap.end()){
-                        chunkPtr = chunk->second;
+            [&](int x, int z)
+            {   
+                chunkGenerationPool.enqueue([&, x, z]{
+                    int height = generationHeight/chunkSizeMeters; 
+                    // Get Height Map
+                    const int sideVox = chunkSizeInts * 32;
+                    std::vector<float> heightMap(sideVox * sideVox, 0.0f);
+                    for (int zVox = 0; zVox < sideVox; ++zVox) {
+                        const float worldZ = z*chunkSizeMeters + static_cast<float>(zVox) * voxSizeMeters;
+                        for (int xVox = 0; xVox < sideVox; ++xVox) {
+                            const float worldX = x*chunkSizeMeters + static_cast<float>(xVox) * voxSizeMeters;
+                            heightMap[zVox * sideVox + xVox] = terrain().heightAt(worldX, worldZ);
+                            std::cout << terrain().heightAt(0.01245f,1.324f) << std::endl;
+                        }
                     }
-                }
-                if (chunkPtr != nullptr && !chunkPtr->isGenerated())
-                {
-                    {
-                        std::lock_guard<std::mutex> lock(chunkPtr->mutex);
-                        const auto startTime = std::chrono::steady_clock::now();
-                        chunkPtr->generate();
-                        chunkPtr->updateMesh();
-                        const float totalTime = std::chrono::duration<float>(
-                            std::chrono::steady_clock::now() - startTime).count();
-                        (void)totalTime;
-                        // std::cout << "ChunkGen (" << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << ") " << std::fixed << std::setprecision(4) << totalTime << "s" << std::endl;
+                    
+                    
+                    // For each chunk use height map
+                    for (int y=-height; y<height; y++){
+                        
+                        ChunkPos chunkPos = ChunkPos{x, y, z};
+                        std::shared_ptr<Chunk> chunkPtr = nullptr;
+                        {
+                            std::lock_guard<std::mutex> lockMap(chunkMapMutex);
+                            auto chunk = chunkMap.find(chunkPos);
+                            if (chunk != chunkMap.end()){
+                                chunkPtr = chunk->second;
+                            }
+                        }
+                        if (chunkPtr != nullptr && !chunkPtr->isGenerated())
+                        {
+                            {
+                                std::lock_guard<std::mutex> lock(chunkPtr->mutex);
+                                const auto startTime = std::chrono::steady_clock::now();
+                                chunkPtr->generate(heightMap);
+                                chunkPtr->updateOccupancy();
+                                chunkPtr->updateMesh();
+                                const float totalTime = std::chrono::duration<float>(
+                                    std::chrono::steady_clock::now() - startTime).count();
+                                (void)totalTime;
+                                std::cout << "ChunkGen (" << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << ") " << std::fixed << std::setprecision(4) << totalTime << "s" << std::endl;
+                            }
+                            {
+                                std::lock_guard<std::mutex> lock(bufferQueueMutex);
+                                bufferUpdateQueue.push_back(chunkPtr);
+                            }
+                        }
                     }
-                    {
-                        std::lock_guard<std::mutex> lock(bufferQueueMutex);
-                        bufferUpdateQueue.push_back(chunkPtr);
+
+                    // After chunks are generated add rocks and features.
+                    for (int i = 0; i < 2; i++){
+                        // A random Coordinate
+                        float chunkX = (rand()/(float)RAND_MAX)*chunkSizeMeters;
+                        float chunkZ = (rand()/(float)RAND_MAX)*chunkSizeMeters;
+                        float worldX = x*chunkSizeMeters+chunkX;
+                        float worldZ = z*chunkSizeMeters+chunkZ;
+                        float frequency = 0.04;
+                        float regionalChance = glm::max(0.0f, (noise.noise2D(worldX*frequency, worldZ*frequency)+3)/4);
+                        float individualChance = (rand()/(float)RAND_MAX);
+                        if (regionalChance * individualChance > 0.70){
+                        // if (regionalChance * individualChance > 0.30){
+                            std::vector<shared_ptr<IChunkModifier>> rocks = terrainGenerator->generateRocks(worldX, heightMap[glm::floor(chunkZ*voxPerMeter) * sideVox + glm::floor(chunkX*voxPerMeter)], worldZ, 3, *this);
+                            for (auto rock : rocks){
+                                modifyChunks(rock);
+                            }
+                        }
                     }
-                }
+                });
             }
         );
     }).detach();

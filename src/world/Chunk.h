@@ -31,7 +31,7 @@ class Chunk
         // bind buffers
         void bindMesh();
         // Generate the chunk
-        void generate();
+        void generate(std::vector<float> heightMap);
         // Update Buffers
         void updateBuffer();
 

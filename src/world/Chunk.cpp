@@ -1,5 +1,6 @@
 #include "Chunk.h"
 #include "ChunkManager.h"
+#include "TerrainGenerator.h"
 #include <algorithm>
 #include <chrono>
 
@@ -172,20 +173,11 @@ void Chunk::uploadDirtyMaterialRegion()
     materialDirty_ = false;
 }
 
-void Chunk::generate(){
+void Chunk::generate(std::vector<float> heightMap){
     const int sideVox = cm.chunkSizeInts * 32;
     const int textureSize = cm.chunkSizeInts * 16;
     const int yxOffset = cm.occupancyXsize * cm.occupancyYsize;
     const float texelWorldSize = cm.voxSizeMeters * 2.0f;
-
-    std::vector<float> heightMap(sideVox * sideVox, 0.0f);
-    for (int zVox = 0; zVox < sideVox; ++zVox) {
-        const float worldZ = worldcp.z + static_cast<float>(zVox) * cm.voxSizeMeters;
-        for (int xVox = 0; xVox < sideVox; ++xVox) {
-            const float worldX = worldcp.x + static_cast<float>(xVox) * cm.voxSizeMeters;
-            heightMap[zVox * sideVox + xVox] = cm.terrain().heightAt(worldX, worldZ);
-        }
-    }
 
     for (int z = 0; z < cm.occupancyZsize; z++) {
         for (int y = 0; y < cm.occupancyYsize; y++) {
@@ -700,6 +692,7 @@ void Chunk::fillTerrain(uint32_t* occupancyInt, int x, int y, int z, const float
         const int localX = 31 - bit;
         const int xVox = x * 32 + localX;
         const float surfaceHeight = heightMap[z * sideVox + xVox];
+
 
         if (worldY + cm.voxSizeMeters <= surfaceHeight) {
             *occupancyInt |= (1u << bit);

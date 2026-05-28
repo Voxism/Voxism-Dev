@@ -10,8 +10,11 @@
 #include <deque>
 #include <thread>
 #include <atomic>
+#include <glm/glm.hpp>
 #include "modifiers/IChunkModifier.h"
-#include "TerrainGenerator.h"
+#include "PerlinNoise.h"
+// #include "TerrainGenerator.h"
+class TerrainGenerator;
 
 #include "../threads/ThreadPool.h"
 #include <shared_mutex>
@@ -25,6 +28,7 @@ class ChunkManager {
                      float chunkSizeMeters, 
                      int renderDistance, int renderHeight,
                      int generationDistance, int generationHeight);
+        ~ChunkManager();
         int renderDistance, renderHeight;
         int generationDistance, generationHeight;
         int terrainMinChunks, terrainMaxChunks;
@@ -91,8 +95,11 @@ class ChunkManager {
         ThreadPool occupancyUpdatePool;
         ThreadPool meshUpdatePool;
         ThreadPool bufferUpdatePool;
+        ThreadPool chunkGenerationPool;
 
-        std::unique_ptr<TerrainGenerator> terrainGenerator;
+        PerlinNoise noise;
+
+        std::shared_ptr<TerrainGenerator> terrainGenerator;
         std::deque<std::shared_ptr<Chunk>> occupancyUpdateQueue;
         std::deque<std::shared_ptr<Chunk>> meshUpdateQueue;
         std::deque<std::shared_ptr<Chunk>> bufferUpdateQueue; //buffers must be updated on the main thread.
