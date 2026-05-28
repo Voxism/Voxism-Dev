@@ -190,13 +190,14 @@ float shadowVisibility(vec3 voxelPos, vec3 N, vec3 L)
     return visibility;
 }
 
-PatternNoise getGradientPattern(vec3 localCoord){
+PatternNoise getGradientPattern(vec3 localCoord, float random){
     PatternNoise pn;
 
-    float frequency = 2;
-    float scale = 0.2;
-    float noise = sin(localCoord.x*2 + localCoord.y*2 + localCoord.z*2)*scale;
-    pn.diffuseNoise = vec3(noise,noise,noise);
+    float frequency = 0.2;
+    float scale = 0.10;
+    float randomScale = 1000;
+    float noise = sin(localCoord.x*frequency + random*frequency*randomScale) * sin(localCoord.y*frequency + random*frequency*randomScale) * sin(localCoord.z*frequency + random*frequency*randomScale) * scale;
+    pn.diffuseNoise = vec3(noise);
     pn.roughnessNoise = 0.0;
     pn.metallicNoise = 0.0;
     return pn;
@@ -283,18 +284,22 @@ void main()
         // {patNoise = getBrickPattern();}
 
         case 2: // gradient pattern
-        {patNoise = getGradientPattern();}
+        {
+            patNoise = getGradientPattern(voxelPos, random1);
+            break;
+        }
 
         default: //No noise/pattern
         {
             patNoise.diffuseNoise = vec3(0,0,0);
             patNoise.roughnessNoise = 0.0;
             patNoise.metallicNoise = 0.0;
+            break;
         }
     }
-
     // base + pattern + [-0.005, 0.005]*factor
     vec3 matDiffuse = clamp(m.diffuse.rgb + patNoise.diffuseNoise + random1*m.diffRandomFactor, 0.0, 1.0);
+    // vec3 matDiffuse = clamp(m.diffuse.rgb + patNoise.diffuseNoise, 0.0, 1.0);
     // base + pattern - [0.000, 0.005]*factor : so roughRandomFactor makes it more shiny.
     float matRoughnessFactor = clamp(m.roughness + patNoise.roughnessNoise - random2*m.roughRandomFactor, 0.0, 1.0);
     // base + pattern + [0.000, 0.005]*factor : so metallicRandomFactor makes it more metalic.

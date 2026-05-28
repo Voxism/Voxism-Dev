@@ -11,9 +11,13 @@
 #include "../Program.h"
 
 struct Material{
-    glm::vec4 diffuse;
-    float roughness;
-    float metallic;
+    glm::vec4 diffuse; // 16
+    float roughness; // 4
+    float metallic; // 4
+    int diffRandomFactor; // 4
+    int roughRandomFactor; // 4
+    int metallicRandomFactor; // 4
+    int pattern; // 4
     float paddnig[2];
     // glm::vec4 ambient;
     // glm::vec4 diffuse;

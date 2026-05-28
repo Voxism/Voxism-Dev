@@ -11,10 +11,14 @@ void Materials::init(GLuint bindingPoint){
     auto addMaterial  = [&](
         glm::vec4 diffuse,
         float roughness,
-        float metallic
+        float metallic,
+        int diffRandomFactor,
+        int roughRandomFactor,
+        int metallicRandomFactor,
+        int pattern
     ) {
         materials.push_back(
-            Material{diffuse, roughness, metallic});
+            Material{diffuse, roughness, metallic, diffRandomFactor, roughRandomFactor, metallicRandomFactor, pattern});
     };
 
     auto addDb16Material = [&](
@@ -25,49 +29,73 @@ void Materials::init(GLuint bindingPoint){
         float metallic = 0.0f
     ) {
         const glm::vec4 diffuse(r, g, b, 1.0f);
-        addMaterial(diffuse, roughness, metallic);
+        addMaterial(diffuse, roughness, metallic, 0,0,0,0);
     };
 
     // Grass
     addMaterial(
-        glm::vec4(0.11f, 0.40f, 0.11f, 1.0f),
-        0.55f,
-        0.0f
+        glm::vec4(0.11f, 0.40f, 0.11f, 1.0f), // diffuse
+        0.50f, //roughness
+        0.0f, //metallic
+        15, //diffRandomFactor [0-200] 
+        80, //roughRandomFactor [0-200] 
+        0, //metallicRandomFactor [0-200]
+        2 //pattern
     );
     
     // Stone
     addMaterial(
-        glm::vec4(0.20f, 0.20f, 0.20f, 1.0f),
-        0.8f,
-        0.0f
+        glm::vec4(0.30f, 0.30f, 0.30f, 1.0f),
+        0.7f,
+        0.05f,
+        15,
+        30,
+        30,
+        0
     );
 
     // Brick
     addMaterial(
         glm::vec4(0.60f, 0.30f, 0.26f, 1.0f),
         0.88f,
-        0.0f
+        0.0f,
+        0,
+        0,
+        0,
+        0
     );
 
     // Sand
     addMaterial(
         glm::vec4(1.0f, 0.89f, 0.49f, 1.0f),
         0.25f,
-        0.00f
+        0.00f,
+        0,
+        0,
+        0,
+        0
     );
 
     // Dirt
     addMaterial(
         glm::vec4(0.29f, 0.22f, 0.08f, 1.0f),
         0.80f,
-        0.08f
+        0.08f,
+        0,
+        0,
+        0,
+        0
     );
     
     // Gold
     addMaterial(
         glm::vec4(0.85f, 0.73f, 0.09f, 1.0f),
         0.40f,
-        0.85f
+        0.85f,
+        0,
+        0,
+        0,
+        0
     );
 
     // DB16 palette for authored voxel flora and props.
