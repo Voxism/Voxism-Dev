@@ -1612,12 +1612,16 @@ public:
 
 	void drawGameplayHud(int width, int height)
 	{
+		(void)width;
 		(void)height;
+		const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+		const float hudWidth = displaySize.x;
 		ImDrawList *drawList = ImGui::GetForegroundDrawList();
+		const float hudMargin = 18.0f;
 		ImFont *font = hudFont_ ? hudFont_ : ImGui::GetFont();
-		const float panelWidth = std::min(640.0f, std::max(430.0f, static_cast<float>(width) - 36.0f));
+		const float panelWidth = std::min(640.0f, std::max(430.0f, hudWidth - 36.0f));
 		const float panelHeight = 64.0f;
-		const ImVec2 panelMin(18.0f, 18.0f);
+		const ImVec2 panelMin(hudMargin, hudMargin);
 		const ImVec2 panelMax(panelMin.x + panelWidth, panelMin.y + panelHeight);
 
 		drawList->AddRectFilled(panelMin, panelMax, uiRgba(10, 14, 20, 0.48f), 6.0f);
@@ -1683,6 +1687,16 @@ public:
 		const float statusValueY = statusMin.y + 18.0f;
 		drawList->AddText(font, 13.0f, ImVec2(statusLabelX, statusLabelY), labelColor, "Status");
 		drawList->AddText(font, 18.0f, ImVec2(statusLabelX, statusValueY), valueColor, cameraStatusText().c_str());
+
+		char fpsText[16];
+		snprintf(fpsText, sizeof(fpsText), "%.0f", ImGui::GetIO().Framerate);
+		const float fpsPanelHeight = 40.0f;
+		const float fpsPanelWidth = std::max(72.0f, font->CalcTextSizeA(18.0f, FLT_MAX, 0.0f, fpsText).x + 24.0f);
+		const ImVec2 fpsMax(hudWidth - hudMargin, hudMargin + fpsPanelHeight);
+		const ImVec2 fpsMin(fpsMax.x - fpsPanelWidth, hudMargin);
+		drawList->AddRectFilled(fpsMin, fpsMax, uiRgba(10, 14, 20, 0.48f), 5.0f);
+		drawList->AddText(font, 13.0f, ImVec2(fpsMin.x + 12.0f, fpsMin.y + 6.0f), labelColor, "FPS");
+		drawList->AddText(font, 18.0f, ImVec2(fpsMin.x + 12.0f, fpsMin.y + 18.0f), valueColor, fpsText);
 	}
 
 	void render()
