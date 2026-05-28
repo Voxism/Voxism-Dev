@@ -117,6 +117,52 @@ std::shared_ptr<Chunk> ChunkManager::getChunk(const ChunkPos &chunkPos) const
     return nullptr;
 }
 
+std::vector<ChunkPos> ChunkManager::getGeneratedChunkPositions() const
+{
+    std::vector<ChunkPos> positions;
+    std::lock_guard<std::mutex> lockMap(chunkMapMutex);
+    positions.reserve(chunkMap.size());
+    for (const auto &entry : chunkMap) {
+        const std::shared_ptr<Chunk> &chunk = entry.second;
+        if (!chunk) {
+            continue;
+        }
+        std::lock_guard<std::mutex> lockChunk(chunk->mutex);
+        if (chunk->isGenerated()) {
+            positions.push_back(entry.first);
+        }
+    }
+    return positions;
+}
+
+std::shared_ptr<Chunk> ChunkManager::ensureChunkExists(const ChunkPos &chunkPos)
+{
+    {
+        std::lock_guard<std::mutex> lockMap(chunkMapMutex);
+        auto it = chunkMap.find(chunkPos);
+        if (it != chunkMap.end()) {
+            return it->second;
+        }
+    }
+
+    ChunkPos chunkCopy = chunkPos;
+    std::shared_ptr<Chunk> newChunk = std::make_shared<Chunk>(*this, chunkCopy);
+    {
+        std::lock_guard<std::mutex> lockChunk(newChunk->mutex);
+        newChunk->bindMesh();
+        // Mark as generated so modifier-driven loads can immediately enqueue
+        // occupancy/mesh rebuilds without waiting for procedural generation.
+        newChunk->setGenerated(true);
+    }
+
+    std::lock_guard<std::mutex> lockMap(chunkMapMutex);
+    auto insertResult = chunkMap.emplace(chunkPos, newChunk);
+    if (!insertResult.second) {
+        return insertResult.first->second;
+    }
+    return newChunk;
+}
+
 void ChunkManager::queueOccupancyUpdate(const std::shared_ptr<Chunk> &chunk)
 {
     if (!chunk) {
