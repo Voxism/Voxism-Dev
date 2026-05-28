@@ -32,6 +32,18 @@ void Shape::createShape(tinyobj::shape_t & shape)
 		eleBuf = shape.mesh.indices;
 }
 
+void Shape::setMeshData(std::vector<float> positions,
+	std::vector<float> normals,
+	std::vector<unsigned int> indices,
+	std::vector<float> colors)
+{
+	posBuf = std::move(positions);
+	norBuf = std::move(normals);
+	eleBuf = std::move(indices);
+	colBuf = std::move(colors);
+	texBuf.clear();
+}
+
 void Shape::setColors(std::vector<float> colors)
 {
 	colBuf = std::move(colors);

@@ -16,6 +16,10 @@ public:
 	Shape();
 	virtual ~Shape();
 	void createShape(tinyobj::shape_t & shape);
+	void setMeshData(std::vector<float> positions,
+		std::vector<float> normals,
+		std::vector<unsigned int> indices,
+		std::vector<float> colors = {});
 	void setColors(std::vector<float> colors);
 	void init();
 	void measure();

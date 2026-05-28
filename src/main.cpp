@@ -16,6 +16,7 @@
 #include <GLFW/glfw3.h>
 
 #include "CharacterController.h"
+#include "BirdFlock.h"
 #include "GameWorld.h"
 #include "GltfMesh.h"
 #include "Skybox.h"
@@ -242,6 +243,9 @@ public:
 		sunWorld_ = vec3(12.0f, 30.0f, 20.0f);
 
 		chunkManager->loadFloraAssets(resourceDirectory);
+		if (!birdFlock_.init(resourceDirectory)) {
+			cerr << "Bird asset load failed." << endl;
+		}
 
 		chunkManager->generateChunks(vec3(0,0,0));
 
@@ -282,6 +286,29 @@ public:
 		chunkProg_->addUniform("normalBiasVoxels");
 		chunkProg_->addAttribute("vertPos");
 		chunkProg_->addAttribute("normalID");
+
+		birdProg_ = make_shared<Program>();
+		birdProg_->setVerbose(true);
+		birdProg_->setShaderNames(
+			shaderPath(resourceDirectory, "scene", "tool_vertcolor_vert.glsl"),
+			shaderPath(resourceDirectory, "scene", "tool_vertcolor_frag.glsl")
+		);
+		if (!birdProg_->init())
+			cerr << "birdProg failed to link" << endl;
+		birdProg_->addUniform("P");
+		birdProg_->addUniform("V");
+		birdProg_->addUniform("M");
+		birdProg_->addUniform("lightPos");
+		birdProg_->addUniform("camPos");
+		birdProg_->addUniform("lightColor");
+		birdProg_->addUniform("matAmbient");
+		birdProg_->addUniform("matDiffuse");
+		birdProg_->addUniform("matSpecular");
+		birdProg_->addUniform("shininess");
+		birdProg_->addUniform("tintColor");
+		birdProg_->addAttribute("vertPos");
+		birdProg_->addAttribute("vertNor");
+		birdProg_->addAttribute("vertCol");
 
 		// Lit texture pass (world-space Blinn-Phong, 471-style texture sampling)
 		texProg_ = make_shared<Program>();
@@ -1064,6 +1091,7 @@ public:
 			}
 		}
 		
+		birdFlock_.update(dt, fpvCamera.GetCameraPos());
 		toolView_.update(dt);
 		breakParticles_.update(dt);
 		spawnLandingParticles();
@@ -1145,6 +1173,8 @@ public:
 		bindChunkShadowUniforms();
 		chunkManager->drawChunks(*chunkProg_, fpvCamera, frustum, frameNumber++);
 		chunkProg_->unbind();
+
+		birdFlock_.draw(birdProg_, P, V, sunWorld_, lightColor, eye);
 
 		ToolPreview preview = toolManager_.getPreview(*chunkManager, eye, glm::normalize(camera->GetForward()), ToolMode::Build);
 		previewRenderer_.draw(preview, chunkManager->voxSizeMeters, P, V);
@@ -1322,6 +1352,7 @@ public:
 		ImGui::Text("Sun Pos: %.2f %.2f %.2f", sunWorld_.x, sunWorld_.y, sunWorld_.z);
 		ImGui::Text("Tool: %s", toolManager_.activeToolName());
 		ImGui::Text("Material: %s", toolManager_.activeMaterialName());
+		ImGui::Text("Birds: %zu", birdFlock_.birdCount());
 		if (toolManager_.activeToolUsesMeterRadius()) {
 			ImGui::Text("Tool Size: %.2f m", toolManager_.activeToolRadiusMeters());
 		} else {
@@ -1368,6 +1399,7 @@ private:
 	shared_ptr<Program> texProg_;
 	shared_ptr<Program> godrayProg_, bloomBrightProg_, blurProg_, compositeProg_;
 	shared_ptr<Program> chunkProg_;
+	shared_ptr<Program> birdProg_;
 	shared_ptr<Program> shadowDepthProg_;
 	shared_ptr<Program> ssaoProg_;
 	shared_ptr<Program> ssaoBlurProg_;
@@ -1401,6 +1433,7 @@ private:
 	int postW_ = 0, postH_ = 0;
 
 	GameWorld world_;
+	BirdFlock birdFlock_;
 
 	bool keyW_ = false, keyS_ = false, keyA_ = false, keyD_ = false;
 	bool keySunLeft_ = false, keySunRight_ = false;
