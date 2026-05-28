@@ -245,6 +245,8 @@ struct PostProcessToggle {
     float ssaoRadius     = 0.75f;
     float ssaoBias       = 0.025f;
     float ssaoIntensity  = 1.0f;
+    bool  taaEnabled     = false;
+    float taaBlend       = 0.1f;
 };
 
 struct WorldLoadState {
@@ -627,7 +629,9 @@ public:
 	{
 		if (breakSfxIds_.empty()) return;
 		std::uniform_int_distribution<size_t> dist(0, breakSfxIds_.size() - 1);
-		soundtrack_.playSfx(breakSfxIds_[dist(sfxRng_)]);
+		const float volume =
+			toolManager_.activeToolKind() == ToolKind::OrganicSphere ? 0.5f : 1.0f;
+		soundtrack_.playSfx(breakSfxIds_[dist(sfxRng_)], volume);
 	}
 
 	/** Play a random place sfx (from sfx/place/stone1..4.ogg). Non-fatal. */
@@ -635,7 +639,9 @@ public:
 	{
 		if (placeSfxIds_.empty()) return;
 		std::uniform_int_distribution<size_t> dist(0, placeSfxIds_.size() - 1);
-		soundtrack_.playSfx(placeSfxIds_[dist(sfxRng_)]);
+		const float volume =
+			toolManager_.activeToolKind() == ToolKind::OrganicSphere ? 0.5f : 1.0f;
+		soundtrack_.playSfx(placeSfxIds_[dist(sfxRng_)], volume);
 	}
 
 	void spawnBreakParticles(const ChunkEditSummary &editSummary)
@@ -852,6 +858,25 @@ public:
 			ssaoBlurProg_->addUniform("texelSize");
 			ssaoBlurProg_->addUniform("invProjection");
 		}
+
+		// TAA resolve shader
+		taaProg_ = make_shared<Program>();
+		taaProg_->setVerbose(true);
+		taaProg_->setShaderNames(shaderPath(resourceDirectory, "postprocess", "screen_vert.glsl"),
+		                         shaderPath(resourceDirectory, "postprocess", "taa_resolve_frag.glsl"));
+		if (!taaProg_->init()) {
+			cerr << "taaProg failed — TAA disabled" << endl;
+			postToggles_.taaEnabled = false;
+		} else {
+			taaProg_->addUniform("currentTex");
+			taaProg_->addUniform("historyTex");
+			taaProg_->addUniform("depthTex");
+			taaProg_->addUniform("invViewProj");
+			taaProg_->addUniform("prevViewProj");
+			taaProg_->addUniform("texelSize");
+			taaProg_->addUniform("historyValid");
+			taaProg_->addUniform("blendFactor");
+		}
 	}
 
 	void teardownPostProcess()
@@ -903,6 +928,11 @@ public:
 		if (ssaoBlurFBO_) { glDeleteFramebuffers(1, &ssaoBlurFBO_); ssaoBlurFBO_ = 0; }
 		if (ssaoBlurTex_) { glDeleteTextures(1, &ssaoBlurTex_); ssaoBlurTex_ = 0; }
 		if (noiseTex_) { glDeleteTextures(1, &noiseTex_); noiseTex_ = 0; }
+		if (taaFBO_) { glDeleteFramebuffers(1, &taaFBO_); taaFBO_ = 0; }
+		for (int i = 0; i < 2; i++) {
+			if (taaHistoryTex_[i]) { glDeleteTextures(1, &taaHistoryTex_[i]); taaHistoryTex_[i] = 0; }
+		}
+		taaHistoryValid_ = false;
 		postW_ = postH_ = 0;
 	}
 
@@ -1031,6 +1061,27 @@ public:
 			postToggles_.ssaoEnabled = false;
 		}
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+		// TAA FBO + ping-pong history textures (full res, bilinear for history fetch)
+		glGenFramebuffers(1, &taaFBO_);
+		glGenTextures(2, taaHistoryTex_);
+		for (int i = 0; i < 2; i++) {
+			glBindTexture(GL_TEXTURE_2D, taaHistoryTex_[i]);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, nullptr);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		}
+		glBindFramebuffer(GL_FRAMEBUFFER, taaFBO_);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, taaHistoryTex_[0], 0);
+		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+			cerr << "[TAA] TAA FBO incomplete — TAA disabled" << endl;
+			postToggles_.taaEnabled = false;
+		}
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		taaHistoryIdx_ = 0;
+		taaHistoryValid_ = false;
 
 		// Generate SSAO kernel and noise texture (once)
 		if (ssaoKernel_.empty())
@@ -1420,6 +1471,12 @@ public:
 			cout << "[PostFX] Bloom: " << (postToggles_.bloomEnabled ? "ON" : "OFF") << endl;
 		}
 
+		if (key == GLFW_KEY_MINUS && action == GLFW_PRESS) {
+			postToggles_.taaEnabled = !postToggles_.taaEnabled;
+			taaHistoryValid_ = false;
+			cout << "[PostFX] TAA: " << (postToggles_.taaEnabled ? "ON" : "OFF") << endl;
+		}
+
 		if (action == GLFW_PRESS || action == GLFW_REPEAT) {
 			if (key == GLFW_KEY_LEFT_BRACKET) {
 				toolManager_.cycleSize(-1);
@@ -1741,14 +1798,31 @@ public:
 		sizePulseStartSeconds_ = glfwGetTime();
 	}
 
+	std::string cameraStatusText() const
+	{
+		if (camera == &freeCamera) {
+			return "Freecam";
+		}
+		if (fpvCamera.IsFlyMode()) {
+			return "Player - Flying";
+		}
+		return "Player";
+	}
+
 	void drawGameplayHud(int width, int height)
 	{
+		(void)width;
 		(void)height;
+		const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+		const float hudWidth = displaySize.x;
 		ImDrawList *drawList = ImGui::GetForegroundDrawList();
+		const float hudMargin = 18.0f;
 		ImFont *font = hudFont_ ? hudFont_ : ImGui::GetFont();
-		const float panelWidth = std::min(640.0f, std::max(430.0f, static_cast<float>(width) - 36.0f));
+
+		const float panelWidth = std::min(640.0f, std::max(430.0f, hudWidth - 36.0f));
 		const float panelHeight = 92.0f;
-		const ImVec2 panelMin(18.0f, 18.0f);
+		const ImVec2 panelMin(hudMargin, hudMargin);
+
 		const ImVec2 panelMax(panelMin.x + panelWidth, panelMin.y + panelHeight);
 
 		drawList->AddRectFilled(panelMin, panelMax, uiRgba(10, 14, 20, 0.48f), 6.0f);
@@ -1830,6 +1904,27 @@ public:
 			                  1.0f);
 			drawList->AddText(font, 14.0f, ImVec2(panelMin.x + 18.0f, panelMin.y + 71.0f), labelColor, statusText.c_str());
 		}
+		const float statusStripWidth = panelWidth / 3.0f;
+		const float statusStripHeight = 40.0f;
+		const ImVec2 statusMin(panelMin.x, panelMax.y + 6.0f);
+		const ImVec2 statusMax(statusMin.x + statusStripWidth, statusMin.y + statusStripHeight);
+		drawList->AddRectFilled(statusMin, statusMax, uiRgba(10, 14, 20, 0.48f), 5.0f);
+
+		const float statusLabelX = statusMin.x + 12.0f;
+		const float statusLabelY = statusMin.y + 6.0f;
+		const float statusValueY = statusMin.y + 18.0f;
+		drawList->AddText(font, 13.0f, ImVec2(statusLabelX, statusLabelY), labelColor, "Status");
+		drawList->AddText(font, 18.0f, ImVec2(statusLabelX, statusValueY), valueColor, cameraStatusText().c_str());
+
+		char fpsText[16];
+		snprintf(fpsText, sizeof(fpsText), "%.0f", ImGui::GetIO().Framerate);
+		const float fpsPanelHeight = 40.0f;
+		const float fpsPanelWidth = std::max(72.0f, font->CalcTextSizeA(18.0f, FLT_MAX, 0.0f, fpsText).x + 24.0f);
+		const ImVec2 fpsMax(hudWidth - hudMargin, hudMargin + fpsPanelHeight);
+		const ImVec2 fpsMin(fpsMax.x - fpsPanelWidth, hudMargin);
+		drawList->AddRectFilled(fpsMin, fpsMax, uiRgba(10, 14, 20, 0.48f), 5.0f);
+		drawList->AddText(font, 13.0f, ImVec2(fpsMin.x + 12.0f, fpsMin.y + 6.0f), labelColor, "FPS");
+		drawList->AddText(font, 18.0f, ImVec2(fpsMin.x + 12.0f, fpsMin.y + 18.0f), valueColor, fpsText);
 	}
 
 	void render()
@@ -1847,6 +1942,16 @@ public:
 		mat4 V = camera->GetViewMatrix();
 		Pstack.popMatrix();
 		const vec3 sunDir = currentSunDirection();
+
+		// Sub-pixel jitter for TAA — applied to the scene-render projection only.
+		// Shadows, sun projection, and SSAO keep the unjittered P.
+		mat4 Pjit = P;
+		if (postToggles_.taaEnabled && postW_ > 0 && postH_ > 0) {
+			glm::vec2 jitter = (haltonJitter(taaFrame_ % 8) - glm::vec2(0.5f)) * 2.0f
+			                   / glm::vec2((float)postW_, (float)postH_);
+			Pjit[2][0] += jitter.x;
+			Pjit[2][1] += jitter.y;
+		}
 
 		if (shadowSettings_.enabled && shadowMap_.isReady()) {
 			if (chunkManager->isShadowMapsDirty() || chunkManager->hasPendingBufferUpdates()) {
@@ -1870,10 +1975,43 @@ public:
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		if (wireframe_)
 			glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-		drawScene3D(P, V, sunDir);
+		drawScene3D(Pjit, V, sunDir);
 		if (wireframe_)
 			glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+		// --- TAA resolve: reproject + blend history, output feeds the rest of post ---
+		GLuint sceneInputTex = sceneColorTex_;
+		if (postToggles_.taaEnabled && taaFBO_ != 0) {
+			int writeIdx = 1 - taaHistoryIdx_;
+			glBindFramebuffer(GL_FRAMEBUFFER, taaFBO_);
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, taaHistoryTex_[writeIdx], 0);
+			glViewport(0, 0, postW_, postH_);
+			glClear(GL_COLOR_BUFFER_BIT);
+			taaProg_->bind();
+			mat4 invVP = glm::inverse(Pjit * V);
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
+			glUniform1i(taaProg_->getUniform("currentTex"), 0);
+			glActiveTexture(GL_TEXTURE1);
+			glBindTexture(GL_TEXTURE_2D, taaHistoryTex_[taaHistoryIdx_]);
+			glUniform1i(taaProg_->getUniform("historyTex"), 1);
+			glActiveTexture(GL_TEXTURE2);
+			glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
+			glUniform1i(taaProg_->getUniform("depthTex"), 2);
+			glUniformMatrix4fv(taaProg_->getUniform("invViewProj"), 1, GL_FALSE, value_ptr(invVP));
+			glUniformMatrix4fv(taaProg_->getUniform("prevViewProj"), 1, GL_FALSE, value_ptr(prevViewProj_));
+			glUniform2f(taaProg_->getUniform("texelSize"), 1.0f / (float)postW_, 1.0f / (float)postH_);
+			glUniform1i(taaProg_->getUniform("historyValid"), (taaHistoryValid_ && sceneDepthTex_ != 0) ? 1 : 0);
+			glUniform1f(taaProg_->getUniform("blendFactor"), postToggles_.taaBlend);
+			drawFullscreenQuad();
+			taaProg_->unbind();
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+			sceneInputTex = taaHistoryTex_[writeIdx];
+			taaHistoryIdx_ = writeIdx;
+			taaHistoryValid_ = true;
+		}
 
 		const SunProjection sunProj = projectSunToScreen(P, V, sunWorld_);
 		const vec2  sunScreen      = sunProj.sunScreen;
@@ -1893,7 +2031,7 @@ public:
 			glClear(GL_COLOR_BUFFER_BIT);
 			godrayProg_->bind();
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
+			glBindTexture(GL_TEXTURE_2D, sceneInputTex);
 			glUniform1i(godrayProg_->getUniform("sceneTex"), 0);
 			glUniform2f(godrayProg_->getUniform("sunPos"), sunScreen.x, sunScreen.y);
 			glUniform1f(godrayProg_->getUniform("time"), (float)glfwGetTime());
@@ -1912,7 +2050,7 @@ public:
 			glClear(GL_COLOR_BUFFER_BIT);
 			bloomBrightProg_->bind();
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
+			glBindTexture(GL_TEXTURE_2D, sceneInputTex);
 			glUniform1i(bloomBrightProg_->getUniform("sceneTex"), 0);
 			drawFullscreenQuad();
 			bloomBrightProg_->unbind();
@@ -1948,7 +2086,7 @@ public:
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		compositeProg_->bind();
 		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
+		glBindTexture(GL_TEXTURE_2D, sceneInputTex);
 		glUniform1i(compositeProg_->getUniform("sceneTex"), 0);
 		glActiveTexture(GL_TEXTURE1);
 		glBindTexture(GL_TEXTURE_2D, godrayTex_);
@@ -2016,6 +2154,14 @@ public:
 			ImGui::Checkbox("Bloom", &postToggles_.bloomEnabled);
 			ImGui::Checkbox("SSAO", &postToggles_.ssaoEnabled);
 			{
+				bool taaEnabled = postToggles_.taaEnabled;
+				if (ImGui::Checkbox("TAA (-)", &taaEnabled)) {
+					postToggles_.taaEnabled = taaEnabled;
+					taaHistoryValid_ = false;
+				}
+			}
+			ImGui::SliderFloat("TAA Blend", &postToggles_.taaBlend, 0.5f, 0.97f, "%.2f");
+			{
 				bool shadowsEnabled = shadowSettings_.enabled;
 				if (ImGui::Checkbox("Shadows", &shadowsEnabled)) {
 					if (shadowsEnabled) {
@@ -2038,6 +2184,10 @@ public:
 		materialRadialMenu_.draw();
 		ImGui::Render();
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+		// Store unjittered view-projection for next frame's TAA reprojection.
+		prevViewProj_ = P * V;
+		taaFrame_++;
 	}
 
 private:
@@ -2072,6 +2222,7 @@ private:
 	shared_ptr<Program> shadowDepthProg_;
 	shared_ptr<Program> ssaoProg_;
 	shared_ptr<Program> ssaoBlurProg_;
+	shared_ptr<Program> taaProg_;
 	shared_ptr<Materials> materials = make_shared<Materials>();
 	shared_ptr<ChunkManager> chunkManager = make_shared<ChunkManager>(
 	16,// voxPerMeter 
@@ -2100,6 +2251,28 @@ private:
 	GLuint noiseTex_ = 0;
 	std::vector<glm::vec3> ssaoKernel_;
 	int postW_ = 0, postH_ = 0;
+
+	// TAA (temporal anti-aliasing)
+	GLuint taaFBO_ = 0;
+	GLuint taaHistoryTex_[2] = {0, 0};
+	int taaHistoryIdx_ = 0;
+	bool taaHistoryValid_ = false;
+	glm::mat4 prevViewProj_ = glm::mat4(1.0f);
+	unsigned int taaFrame_ = 0;
+
+	// Halton(2,3) sub-pixel jitter sequence in [0,1).
+	static glm::vec2 haltonJitter(unsigned int index) {
+		auto halton = [](unsigned int i, unsigned int base) {
+			float f = 1.0f, r = 0.0f;
+			while (i > 0) {
+				f /= (float)base;
+				r += f * (float)(i % base);
+				i /= base;
+			}
+			return r;
+		};
+		return glm::vec2(halton(index + 1, 2), halton(index + 1, 3));
+	}
 
 	GameWorld world_;
 	BirdFlock birdFlock_;
