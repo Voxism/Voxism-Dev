@@ -88,10 +88,28 @@ void FirstPersonCamera::ProcessKeypress(int key, int action) {
         key_pitch_down = is_pressed;
         break;
     case GLFW_KEY_SPACE:
+        if (action == GLFW_PRESS) {
+            const double now = glfwGetTime();
+            if (last_space_press_time_ >= 0.0 &&
+                now - last_space_press_time_ <= kDoubleTapWindowSec) {
+                fly_mode_ = !fly_mode_;
+                vertical_velocity = 0.0f;
+                last_space_press_time_ = -1.0;
+                key_jump = false;
+                break;
+            }
+            last_space_press_time_ = now;
+        }
         key_jump = is_pressed;
         break;
     case GLFW_KEY_LEFT_SHIFT:
-        key_sprint = is_pressed;
+        if (fly_mode_) {
+            key_fly_down = is_pressed;
+            key_sprint = false;
+        } else {
+            key_sprint = is_pressed;
+            key_fly_down = false;
+        }
         break;
     default:
         return;
@@ -120,6 +138,9 @@ void FirstPersonCamera::SetState(glm::vec3 playerPosition, float yawDegrees, flo
     pitch = pitchDegrees;
     fov = fovDegrees;
     vertical_velocity = 0.0f;
+    fly_mode_ = false;
+    key_fly_down = false;
+    last_space_press_time_ = -1.0;
     landing_offset = 0.0f;
     landing_velocity = 0.0f;
     pending_landing_event_ = LandingEvent {};
@@ -193,6 +214,11 @@ FirstPersonCamera::MoveIntent FirstPersonCamera::BuildMoveIntent(float dt)
 
 void FirstPersonCamera::UpdateJumpAndVerticalVelocity(float dt)
 {
+    if (fly_mode_) {
+        vertical_velocity = 0.0f;
+        return;
+    }
+
     if (is_grounded && key_jump) {
         vertical_velocity = jump_velocity;
         is_grounded = false;
@@ -213,6 +239,24 @@ void FirstPersonCamera::ApplyMovement(MoveIntent &move, float dt)
 
 void FirstPersonCamera::ApplyChunkMovement(MoveIntent &move, float dt)
 {
+    if (fly_mode_) {
+        float vertical = 0.0f;
+        if (key_jump) {
+            vertical += trans_sensitivity;
+        }
+        if (key_fly_down) {
+            vertical -= trans_sensitivity;
+        }
+
+        move.delta.y = vertical * dt;
+
+        is_grounded = false;
+        ResolveAxisMove(1, move.delta.y);
+        ResolveAxisMove(0, move.delta.x);
+        ResolveAxisMove(2, move.delta.z);
+        return;
+    }
+
     move.delta.y = vertical_velocity * dt;
 
     // Vertical motion is resolved first so ground hits can zero the fall speed
@@ -236,6 +280,21 @@ void FirstPersonCamera::ApplyChunkMovement(MoveIntent &move, float dt)
 
 void FirstPersonCamera::ApplyFallbackMovement(const MoveIntent &move, float dt)
 {
+    if (fly_mode_) {
+        float vertical = 0.0f;
+        if (key_jump) {
+            vertical += trans_sensitivity;
+        }
+        if (key_fly_down) {
+            vertical -= trans_sensitivity;
+        }
+
+        player_pos += move.delta;
+        player_pos.y += vertical * dt;
+        is_grounded = false;
+        return;
+    }
+
     player_pos += move.delta;
     player_pos.y += vertical_velocity * dt;
 
@@ -447,6 +506,10 @@ float FirstPersonCamera::ResolveCollidingStep(int axis, float step) const
 
 bool FirstPersonCamera::CanAttemptStepUp(int axis, float delta) const
 {
+    if (fly_mode_) {
+        return false;
+    }
+
     if (!chunk_manager_ || (axis != 0 && axis != 2)) {
         return false;
     }
