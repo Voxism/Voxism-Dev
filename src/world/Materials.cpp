@@ -57,33 +57,33 @@ void Materials::init(GLuint bindingPoint){
     // Brick
     addMaterial(
         glm::vec4(0.60f, 0.30f, 0.26f, 1.0f),
-        0.88f,
-        0.0f,
-        0,
-        0,
-        0,
+        0.7f,
+        0.05f,
+        15,
+        30,
+        30,
         0
     );
 
     // Sand
     addMaterial(
         glm::vec4(1.0f, 0.89f, 0.49f, 1.0f),
-        0.25f,
-        0.00f,
-        0,
-        0,
-        0,
+        0.7f,
+        0.05f,
+        15,
+        30,
+        30,
         0
     );
 
     // Dirt
     addMaterial(
         glm::vec4(0.29f, 0.22f, 0.08f, 1.0f),
-        0.80f,
-        0.08f,
-        0,
-        0,
-        0,
+        0.7f,
+        0.05f,
+        15,
+        30,
+        30,
         0
     );
     
