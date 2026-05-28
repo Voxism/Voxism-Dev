@@ -21,9 +21,9 @@ ChunkManager::ChunkManager(
     renderHeight(renderHeight),
     generationDistance(generationDistance),
     generationHeight(generationHeight),
-    noise(53310u),
     terrainMinChunks(0),
     terrainMaxChunks(0),
+    noise(53310u),
     occupancyUpdateQueue(),
     meshUpdateQueue(),
     occupancyUpdatePool(4),
@@ -509,7 +509,6 @@ void ChunkManager::generateChunks(glm::vec3 center){
                         for (int xVox = 0; xVox < sideVox; ++xVox) {
                             const float worldX = x*chunkSizeMeters + static_cast<float>(xVox) * voxSizeMeters;
                             heightMap[zVox * sideVox + xVox] = terrain().heightAt(worldX, worldZ);
-                            std::cout << terrain().heightAt(0.01245f,1.324f) << std::endl;
                         }
                     }
                     

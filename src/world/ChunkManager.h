@@ -98,10 +98,6 @@ class ChunkManager {
         std::unordered_map<ChunkPos, std::shared_ptr<Chunk>, ChunkPosHash> chunkMap;
         mutable std::mutex chunkMapMutex;
         std::mutex bufferQueueMutex;
-        ThreadPool occupancyUpdatePool;
-        ThreadPool meshUpdatePool;
-        ThreadPool bufferUpdatePool;
-        ThreadPool chunkGenerationPool;
 
         PerlinNoise noise;
 
@@ -109,6 +105,16 @@ class ChunkManager {
         std::deque<std::shared_ptr<Chunk>> occupancyUpdateQueue;
         std::deque<std::shared_ptr<Chunk>> meshUpdateQueue;
         std::deque<std::shared_ptr<Chunk>> bufferUpdateQueue; //buffers must be updated on the main thread.
+
+        // Thread pools MUST be declared last so they are destroyed FIRST.
+        // Their destructors join worker threads; those threads dereference
+        // `this` (including terrainGenerator and noise). If pools were
+        // declared earlier they would be destroyed AFTER the data they read,
+        // producing a use-after-free (e.g. on PerlinNoise::perm_).
+        ThreadPool occupancyUpdatePool;
+        ThreadPool meshUpdatePool;
+        ThreadPool bufferUpdatePool;
+        ThreadPool chunkGenerationPool;
 
         template<typename Func>
         void forEachChunkInGenerationDistance(glm::vec3 center, Func func);
