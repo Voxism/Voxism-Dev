@@ -159,6 +159,19 @@ bool ChunkManager::isVoxelOccupied(const glm::ivec3 &voxel)
     return chunk->isOccupiedLocal(local.x, local.y, local.z);
 }
 
+uint8_t ChunkManager::voxelMaterial(const glm::ivec3 &voxel) const
+{
+    const ChunkPos chunkPos = getChunkPosForVoxel(voxel);
+    auto chunk = getChunk(chunkPos);
+    if (!chunk) {
+        return 0;
+    }
+
+    const glm::ivec3 local = worldToLocalVoxel(voxel);
+    std::lock_guard<std::mutex> lock(chunk->mutex);
+    return chunk->getMaterialLocalUnlocked(local.x, local.y, local.z);
+}
+
 bool ChunkManager::isAnyVoxelOccupied(const glm::ivec3 &minVoxel, const glm::ivec3 &maxVoxel) const
 {
     const int chunkSizeVoxels = chunkSizeInts * 32;

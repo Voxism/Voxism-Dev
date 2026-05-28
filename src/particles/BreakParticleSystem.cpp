@@ -9,6 +9,7 @@
 namespace {
 constexpr float kGravity = 16.0f;
 constexpr float kDragPerSecond = 3.0f;
+constexpr float kTau = 6.28318530718f;
 
 std::string particleShaderPath(const std::string &resourceDir, const std::string &filename)
 {
@@ -209,6 +210,40 @@ void BreakParticleSystem::spawnDeleteBurst(const ChunkEditSummary &editSummary, 
 
         glm::vec3 velocity = outward * upwardDist(rng_);
         velocity.y += upwardDist(rng_) * 0.7f;
+        emitParticle(center, velocity, color, lifetimeDist(rng_));
+    }
+}
+
+void BreakParticleSystem::spawnLandingBurst(const glm::vec3 &playerPos,
+    float fallHeight,
+    float voxelSizeMeters,
+    uint8_t materialID)
+{
+    if (fallHeight <= 0.0f) {
+        return;
+    }
+
+    const std::size_t spawnCount = std::min<std::size_t>(
+        kMaxSpawnPerBurst / 2,
+        std::max<std::size_t>(8, static_cast<std::size_t>(std::ceil(fallHeight * 6.0f))));
+
+    const glm::ivec3 centerVoxel = glm::floor(playerPos / voxelSizeMeters);
+    const glm::vec3 color = Materials::paletteColor(materialID);
+    std::uniform_real_distribution<float> upwardDist(0.8f, 1.8f);
+    std::uniform_real_distribution<float> sideScaleDist(1.0f, 2.2f);
+    std::uniform_real_distribution<float> lifetimeDist(0.25f, 0.55f);
+    std::uniform_real_distribution<float> angleDist(0.0f, kTau);
+
+    for (std::size_t i = 0; i < spawnCount; ++i) {
+        const float angle = angleDist(rng_);
+        const glm::vec3 dir(std::cos(angle), 0.0f, std::sin(angle));
+        glm::ivec3 spawnVoxel = centerVoxel + glm::ivec3(
+            static_cast<int>(std::round(dir.x)),
+            -1,
+            static_cast<int>(std::round(dir.z)));
+        const glm::vec3 center = (glm::vec3(spawnVoxel) + glm::vec3(0.5f)) * voxelSizeMeters;
+        glm::vec3 velocity = dir * sideScaleDist(rng_);
+        velocity.y = upwardDist(rng_);
         emitParticle(center, velocity, color, lifetimeDist(rng_));
     }
 }

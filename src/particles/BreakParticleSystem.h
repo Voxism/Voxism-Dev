@@ -18,6 +18,7 @@ public:
 
     bool init(const std::string &resourceDir);
     void spawnDeleteBurst(const ChunkEditSummary &editSummary, float voxelSizeMeters);
+    void spawnLandingBurst(const glm::vec3 &playerPos, float fallHeight, float voxelSizeMeters, uint8_t materialID);
     void update(float dt);
     void draw(const glm::mat4 &P, const glm::mat4 &V, const glm::vec3 &lightDir, float voxelSizeMeters);
 

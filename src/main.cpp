@@ -383,6 +383,27 @@ public:
 		}
 	}
 
+	void spawnLandingParticles()
+	{
+		FirstPersonCamera::LandingEvent landing = fpvCamera.ConsumeLandingEvent();
+		if (!landing.triggered) {
+			return;
+		}
+
+		const glm::vec3 feetPos = fpvCamera.GetFeetPos();
+		uint8_t materialID = Materials::Stone;
+		const glm::vec3 probeStart = feetPos - glm::vec3(0.0f, chunkManager->voxSizeMeters * 0.25f, 0.0f);
+		const glm::ivec3 startVoxel = chunkManager->worldToVoxel(probeStart);
+		for (int offset = 0; offset < 8; ++offset) {
+			const glm::ivec3 probeVoxel = startVoxel - glm::ivec3(0, offset, 0);
+			if (chunkManager->isVoxelOccupied(probeVoxel)) {
+				materialID = chunkManager->voxelMaterial(probeVoxel);
+				break;
+			}
+		}
+		breakParticles_.spawnLandingBurst(feetPos, landing.fallHeight, chunkManager->voxSizeMeters, materialID);
+	}
+
 	void initPostProcessShaders(const string &resourceDirectory)
 	{
 		godrayProg_ = make_shared<Program>();
@@ -977,6 +998,7 @@ public:
 		
 		toolView_.update(dt);
 		breakParticles_.update(dt);
+		spawnLandingParticles();
 
 		toolView_.setAnimTime(animTime_);
 		toolView_.setMoveBlend(glm::clamp(glm::length(wish), 0.0f, 1.0f));

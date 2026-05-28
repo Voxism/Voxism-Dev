@@ -9,6 +9,12 @@ class ChunkManager;
 
 class FirstPersonCamera : public Camera {
 public:
+    struct LandingEvent {
+        bool triggered = false;
+        glm::vec3 position = glm::vec3(0.0f);
+        float fallHeight = 0.0f;
+    };
+
     FirstPersonCamera();
     FirstPersonCamera(glm::vec3 initial_pos, glm::vec3 look_at, float height);
     void SetChunkManager(ChunkManager *chunk_manager);
@@ -18,6 +24,7 @@ public:
     void ProcessKeypress(int key, int action) override;
 
     glm::vec3 GetPlayerPos() const { return player_pos; }
+    glm::vec3 GetFeetPos() const { return player_pos - glm::vec3(0.0f, height, 0.0f); }
 
     glm::vec3 GetCameraPos() const {return cam_pos;}
 
@@ -35,6 +42,7 @@ public:
     glm::vec3 GetForward() const {return forward;}
     glm::vec3 GetRight() const {return right;}
     glm::vec3 GetUp() const {return up;}
+    LandingEvent ConsumeLandingEvent();
 
 private:
     struct MoveIntent {
@@ -97,6 +105,7 @@ private:
     float landing_dip_per_meter = 1.2f;
     float max_landing_dip_velocity = 20.0f;
     float min_landing_dip_fall_height = 0.75f;
+    LandingEvent pending_landing_event_;
 
     // smooth visual rise for auto-step
     float step_up_visual_offset = 0.0f;

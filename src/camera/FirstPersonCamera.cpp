@@ -52,6 +52,13 @@ void FirstPersonCamera::ProcessMouseMovement(double dx, double dy) {
 void FirstPersonCamera::ProcessScroll(double dy) {
 }
 
+FirstPersonCamera::LandingEvent FirstPersonCamera::ConsumeLandingEvent()
+{
+    LandingEvent event = pending_landing_event_;
+    pending_landing_event_ = LandingEvent {};
+    return event;
+}
+
 void FirstPersonCamera::ProcessKeypress(int key, int action) {
     bool is_pressed = action != GLFW_RELEASE;
 
@@ -263,6 +270,9 @@ void FirstPersonCamera::UpdateLandingDip(float dt)
                 max_landing_dip_velocity,
                 landing_dip_amount + fall_height * landing_dip_per_meter);
             landing_velocity = -landing_impulse;
+            pending_landing_event_.triggered = true;
+            pending_landing_event_.position = player_pos;
+            pending_landing_event_.fallHeight = fall_height;
         }
         airborne_peak_y = player_pos.y;
     }

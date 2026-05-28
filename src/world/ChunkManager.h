@@ -41,6 +41,7 @@ class ChunkManager {
         glm::ivec3 worldToVoxel(const glm::vec3 &pos) const;
         glm::ivec3 worldToLocalVoxel(const glm::ivec3 &voxel) const;
         bool isVoxelOccupied(const glm::ivec3 &voxel);
+        uint8_t voxelMaterial(const glm::ivec3 &voxel) const;
         bool isAnyVoxelOccupied(const glm::ivec3 &minVoxel, const glm::ivec3 &maxVoxel) const;
 
         struct VoxelRaycastHit {
