@@ -1194,6 +1194,10 @@ public:
 			showDebugWindow_ = !showDebugWindow_;
 		}
 
+		if (key == GLFW_KEY_2 && action == GLFW_PRESS) {
+			pickLookedAtMaterial();
+		}
+
 		applyCameraKeyState(key, action);
 
 		// if (key == GLFW_KEY_SPACE && action == GLFW_PRESS)
