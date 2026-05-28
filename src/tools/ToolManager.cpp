@@ -192,6 +192,37 @@ void ToolManager::cycleMaterial(int direction)
     }
 }
 
+int ToolManager::activeMaterialIndex() const
+{
+    if (activeTool_ == ToolKind::Cube) {
+        return cubeTool_.materialIndex();
+    }
+    if (activeTool_ == ToolKind::Area) {
+        return areaTool_.materialIndex();
+    }
+    if (activeTool_ == ToolKind::Sphere) {
+        return sphereTool_.materialIndex();
+    }
+    return organicSphereTool_.materialIndex();
+}
+
+void ToolManager::setActiveMaterialIndex(int index)
+{
+    if (index < 0 || index >= Materials::paletteCount) {
+        return;
+    }
+
+    if (activeTool_ == ToolKind::Cube) {
+        cubeTool_.setMaterialIndex(index);
+    } else if (activeTool_ == ToolKind::Area) {
+        areaTool_.setMaterialIndex(index);
+    } else if (activeTool_ == ToolKind::Sphere) {
+        sphereTool_.setMaterialIndex(index);
+    } else {
+        organicSphereTool_.setMaterialIndex(index);
+    }
+}
+
 void ToolManager::clearInactiveToolState()
 {
     if (activeTool_ != ToolKind::Area) {

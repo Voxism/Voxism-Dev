@@ -8,6 +8,7 @@ public:
     ToolPreview preview(const ToolRaycastHit &hit, ToolMode mode) const;
     void cycleSize(int direction);
     void cycleMaterial(int direction);
+    void setMaterialIndex(int index) { paletteIndex_ = index; }
     void clearPending() { hasFirstPoint_ = false; }
     int size() const { return gridSize_; }
     int materialIndex() const { return paletteIndex_; }

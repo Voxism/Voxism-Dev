@@ -4,6 +4,7 @@
  */
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -34,6 +35,7 @@
 #include "Crosshair.h"
 #include "tools/ToolManager.h"
 #include "tools/ToolPreviewRenderer.h"
+#include "ui/MaterialRadialMenu.h"
 #include "ui/RadialToolMenu.h"
 #include "audio/SoundtrackPlayer.h"
 #include "particles/BreakParticleSystem.h"
@@ -382,6 +384,7 @@ public:
 		ImGui_ImplOpenGL3_Init(glsl_version);
 		if (!radialToolMenu_.init(resourceDirectory))
 			cerr << "radialToolMenu init failed" << endl;
+		initMaterialRadialMenu();
 
 		// --- Soundtrack: start looping background music. Non-fatal on failure. ---
 		if (soundtrack_.init()) {
@@ -448,6 +451,40 @@ public:
 			}
 		}
 		breakParticles_.spawnLandingBurst(feetPos, landing.fallHeight, chunkManager->voxSizeMeters, materialID);
+	}
+
+	glm::vec3 materialColorVariant(int materialIndex, float offset) const
+	{
+		return glm::clamp(
+			Materials::paletteColor(materialIndex) + glm::vec3(offset),
+			glm::vec3(0.0f),
+			glm::vec3(1.0f));
+	}
+
+	MaterialMenuOption makeMaterialMenuOption(int materialIndex) const
+	{
+		MaterialMenuOption option;
+		option.materialIndex = materialIndex;
+		option.label = Materials::paletteName(materialIndex);
+		option.swatchColors = {{
+			materialColorVariant(materialIndex, -0.028f),
+			materialColorVariant(materialIndex, -0.010f),
+			materialColorVariant(materialIndex,  0.012f),
+			materialColorVariant(materialIndex,  0.028f),
+		}};
+		return option;
+	}
+
+	void initMaterialRadialMenu()
+	{
+		std::vector<MaterialMenuOption> options;
+		options.push_back(makeMaterialMenuOption(Materials::Grass));
+		options.push_back(makeMaterialMenuOption(Materials::Dirt));
+		options.push_back(makeMaterialMenuOption(Materials::Stone));
+		options.push_back(makeMaterialMenuOption(Materials::Brick));
+		options.push_back(makeMaterialMenuOption(Materials::Sand));
+		options.push_back(makeMaterialMenuOption(Materials::Gold));
+		materialRadialMenu_.init(options);
 	}
 
 	glm::vec3 currentSunDirection() const
@@ -904,9 +941,14 @@ public:
 		}
 	}
 
+	bool anySelectorOpen() const
+	{
+		return radialToolMenu_.isOpen() || materialRadialMenu_.isOpen();
+	}
+
 	void openRadialToolMenu(GLFWwindow *window)
 	{
-		if (radialToolMenu_.isOpen()) {
+		if (anySelectorOpen()) {
 			return;
 		}
 
@@ -934,6 +976,36 @@ public:
 		radialToolMenu_.updateMouse(center);
 	}
 
+	void openMaterialRadialMenu(GLFWwindow *window)
+	{
+		if (anySelectorOpen()) {
+			return;
+		}
+
+		radialMenuRestoreMouseLocked_ = mouseLocked_;
+		leftMouseDown_ = false;
+		rightMouseDown_ = false;
+		toolManager_.endAction(ToolMode::Build);
+		toolManager_.endAction(ToolMode::Delete);
+		toolView_.setContinuousUseActive(false);
+
+		mouseLocked_ = false;
+		firstMouse_ = true;
+		glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+		if (glfwRawMouseMotionSupported()) {
+			glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+		}
+
+		int windowWidth = 0, windowHeight = 0;
+		glfwGetWindowSize(window, &windowWidth, &windowHeight);
+		const ImVec2 center(static_cast<float>(windowWidth) * 0.5f, static_cast<float>(windowHeight) * 0.5f);
+		lastMouseX_ = center.x;
+		lastMouseY_ = center.y;
+		glfwSetCursorPos(window, center.x, center.y);
+		materialRadialMenu_.open(center, toolManager_.activeMaterialIndex());
+		materialRadialMenu_.updateMouse(center);
+	}
+
 	void closeRadialToolMenu(GLFWwindow *window)
 	{
 		if (!radialToolMenu_.isOpen()) {
@@ -943,6 +1015,35 @@ public:
 		ToolKind selectedTool = toolManager_.activeToolKind();
 		if (radialToolMenu_.close(&selectedTool)) {
 			toolManager_.setActiveTool(selectedTool);
+		}
+
+		leftMouseDown_ = false;
+		rightMouseDown_ = false;
+		firstMouse_ = true;
+		if (radialMenuRestoreMouseLocked_) {
+			mouseLocked_ = true;
+			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+			if (glfwRawMouseMotionSupported()) {
+				glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+			}
+		} else {
+			mouseLocked_ = false;
+			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+			if (glfwRawMouseMotionSupported()) {
+				glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+			}
+		}
+	}
+
+	void closeMaterialRadialMenu(GLFWwindow *window)
+	{
+		if (!materialRadialMenu_.isOpen()) {
+			return;
+		}
+
+		int selectedMaterial = toolManager_.activeMaterialIndex();
+		if (materialRadialMenu_.close(&selectedMaterial)) {
+			toolManager_.setActiveMaterialIndex(selectedMaterial);
 		}
 
 		leftMouseDown_ = false;
@@ -975,8 +1076,16 @@ public:
 			}
 			return;
 		}
+		if (key == GLFW_KEY_1) {
+			if (action == GLFW_PRESS) {
+				openMaterialRadialMenu(window);
+			} else if (action == GLFW_RELEASE) {
+				closeMaterialRadialMenu(window);
+			}
+			return;
+		}
 
-		if (radialToolMenu_.isOpen()) {
+		if (anySelectorOpen()) {
 			if (action == GLFW_RELEASE) {
 				applyCameraKeyState(key, action);
 				setMovementKeyState(key, false);
@@ -1077,7 +1186,7 @@ public:
 		(void)window;
 		(void)mods;
 
-		if (radialToolMenu_.isOpen()) {
+		if (anySelectorOpen()) {
 			if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
 				leftMouseDown_ = false;
 			} else if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE) {
@@ -1144,6 +1253,12 @@ public:
 			radialToolMenu_.updateMouse(ImVec2(static_cast<float>(xpos), static_cast<float>(ypos)));
 			return;
 		}
+		if (materialRadialMenu_.isOpen()) {
+			lastMouseX_ = xpos;
+			lastMouseY_ = ypos;
+			materialRadialMenu_.updateMouse(ImVec2(static_cast<float>(xpos), static_cast<float>(ypos)));
+			return;
+		}
 		if (!mouseLocked_){
 			return;
 		}
@@ -1164,7 +1279,7 @@ public:
 	{
 		(void)window;
 		(void)xoffset;
-		if (radialToolMenu_.isOpen()) {
+		if (anySelectorOpen()) {
 			return;
 		}
 		camera->ProcessScroll(yoffset);
@@ -1172,7 +1287,7 @@ public:
 
 	void updateFixedStep(float dt)
 	{
-		const bool radialMenuOpen = radialToolMenu_.isOpen();
+		const bool radialMenuOpen = anySelectorOpen();
 		vec2 wish = radialMenuOpen
 			? vec2(0.0f)
 			: vec2(
@@ -1506,6 +1621,7 @@ public:
 
 		ImGui::End();
 		radialToolMenu_.draw();
+		materialRadialMenu_.draw();
 		ImGui::Render();
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 	}
@@ -1526,6 +1642,7 @@ private:
 	ToolManager toolManager_;
 	ToolPreviewRenderer previewRenderer_;
 	RadialToolMenu radialToolMenu_;
+	MaterialRadialMenu materialRadialMenu_;
 	Crosshair crosshair_;
 	Skybox skybox_;
 	BreakParticleSystem breakParticles_;

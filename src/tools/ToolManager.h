@@ -31,6 +31,8 @@ public:
     void cycleTool(int direction);
     void cycleSize(int direction);
     void cycleMaterial(int direction);
+    int activeMaterialIndex() const;
+    void setActiveMaterialIndex(int index);
     const char *activeToolName() const;
     const char *activeMaterialName() const;
     bool activeToolUsesMeterRadius() const;

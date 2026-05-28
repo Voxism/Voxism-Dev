@@ -25,6 +25,7 @@ public:
         ToolMode mode) const;
     void cycleSize(int direction);
     void cycleMaterial(int direction);
+    void setMaterialIndex(int index) { paletteIndex_ = index; }
     float radiusMeters() const { return sizeMeters_; }
     int materialIndex() const { return paletteIndex_; }
 
