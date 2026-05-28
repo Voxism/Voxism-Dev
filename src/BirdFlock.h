@@ -45,7 +45,7 @@ private:
     std::vector<Bird> birds_;
     std::mt19937 rng_ {std::random_device{}()};
     std::uniform_real_distribution<float> distXZ_ {-42.0f, 42.0f};
-    std::uniform_real_distribution<float> distY_ {10.0f, 22.0f};
+    std::uniform_real_distribution<float> distY_ {5.0f, 15.0f};
     std::uniform_real_distribution<float> distSpeed_ {2.2f, 4.6f};
     std::uniform_real_distribution<float> distRetarget_ {1.5f, 4.0f};
     std::uniform_real_distribution<float> distPhase_ {0.0f, 6.28318530718f};

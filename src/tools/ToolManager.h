@@ -31,6 +31,8 @@ public:
     void cycleTool(int direction);
     void cycleSize(int direction);
     void cycleMaterial(int direction);
+    int activeMaterialIndex() const;
+    void setActiveMaterialIndex(int index);
     const char *activeToolName() const;
     const char *activeMaterialName() const;
     bool activeToolUsesMeterRadius() const;
@@ -39,11 +41,13 @@ public:
 
 private:
     void clearInactiveToolState();
+    void syncMaterialToTools();
 
     CubeTool cubeTool_;
     AreaTool areaTool_;
     SphereTool sphereTool_;
     OrganicSphereTool organicSphereTool_;
     ToolKind activeTool_ = ToolKind::Cube;
+    int materialIndex_ = 1;
     float maxUseDistance_ = 8.0f;
 };

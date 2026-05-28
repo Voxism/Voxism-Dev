@@ -181,15 +181,32 @@ void ToolManager::cycleSize(int direction)
 
 void ToolManager::cycleMaterial(int direction)
 {
-    if (activeTool_ == ToolKind::Cube) {
-        cubeTool_.cycleMaterial(direction);
-    } else if (activeTool_ == ToolKind::Area) {
-        areaTool_.cycleMaterial(direction);
-    } else if (activeTool_ == ToolKind::Sphere) {
-        sphereTool_.cycleMaterial(direction);
-    } else {
-        organicSphereTool_.cycleMaterial(direction);
+    if (direction == 0) {
+        return;
     }
+
+    materialIndex_ += (direction > 0) ? 1 : -1;
+    if (materialIndex_ < 0) {
+        materialIndex_ = Materials::paletteCount - 1;
+    } else if (materialIndex_ >= Materials::paletteCount) {
+        materialIndex_ = 0;
+    }
+    syncMaterialToTools();
+}
+
+int ToolManager::activeMaterialIndex() const
+{
+    return materialIndex_;
+}
+
+void ToolManager::setActiveMaterialIndex(int index)
+{
+    if (index < 0 || index >= Materials::paletteCount) {
+        return;
+    }
+
+    materialIndex_ = index;
+    syncMaterialToTools();
 }
 
 void ToolManager::clearInactiveToolState()
@@ -200,6 +217,14 @@ void ToolManager::clearInactiveToolState()
     if (activeTool_ != ToolKind::OrganicSphere) {
         organicSphereTool_.endStroke();
     }
+}
+
+void ToolManager::syncMaterialToTools()
+{
+    cubeTool_.setMaterialIndex(materialIndex_);
+    areaTool_.setMaterialIndex(materialIndex_);
+    sphereTool_.setMaterialIndex(materialIndex_);
+    organicSphereTool_.setMaterialIndex(materialIndex_);
 }
 
 const char *ToolManager::activeToolName() const
@@ -218,16 +243,7 @@ const char *ToolManager::activeToolName() const
 
 const char *ToolManager::activeMaterialName() const
 {
-    if (activeTool_ == ToolKind::Cube) {
-        return Materials::paletteName(cubeTool_.materialIndex());
-    }
-    if (activeTool_ == ToolKind::Area) {
-        return Materials::paletteName(areaTool_.materialIndex());
-    }
-    if (activeTool_ == ToolKind::Sphere) {
-        return Materials::paletteName(sphereTool_.materialIndex());
-    }
-    return Materials::paletteName(organicSphereTool_.materialIndex());
+    return Materials::paletteName(materialIndex_);
 }
 
 bool ToolManager::activeToolUsesMeterRadius() const

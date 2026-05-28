@@ -52,7 +52,7 @@ class Materials {
             DB16Yellow = 20,
             DB16White = 21
         };
-        const static int paletteCount = 21;
+        const static int paletteCount = DB16White + 1;
 
         Materials();
 

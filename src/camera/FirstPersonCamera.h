@@ -44,6 +44,7 @@ public:
     glm::vec3 GetRight() const {return right;}
     glm::vec3 GetUp() const {return up;}
     LandingEvent ConsumeLandingEvent();
+    bool IsFlyMode() const { return fly_mode_; }
 
 private:
     struct MoveIntent {
@@ -80,6 +81,10 @@ private:
     bool key_pitch_down = false;
     bool key_jump = false;
     bool key_sprint = false;
+    bool key_fly_down = false;
+    bool fly_mode_ = false;
+    double last_space_press_time_ = -1.0;
+    static constexpr double kDoubleTapWindowSec = 0.3;
 
     // view bobbing
     float bob_time = 0.0f;

@@ -4,9 +4,12 @@
  */
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <random>
@@ -34,6 +37,7 @@
 #include "Crosshair.h"
 #include "tools/ToolManager.h"
 #include "tools/ToolPreviewRenderer.h"
+#include "ui/MaterialRadialMenu.h"
 #include "ui/RadialToolMenu.h"
 #include "audio/SoundtrackPlayer.h"
 #include "particles/BreakParticleSystem.h"
@@ -106,6 +110,27 @@ static void ensureTexcoordsXZ(tinyobj::shape_t &sh)
 		sh.mesh.texcoords[2 * i + 0] = x * 0.12f + 0.5f;
 		sh.mesh.texcoords[2 * i + 1] = z * 0.12f + 0.5f;
 	}
+}
+
+namespace {
+ImU32 uiRgba(int r, int g, int b, float alpha)
+{
+	return IM_COL32(r, g, b, static_cast<int>(255.0f * glm::clamp(alpha, 0.0f, 1.0f)));
+}
+
+ImU32 uiColorFromVec3(const glm::vec3 &color, float alpha)
+{
+	return IM_COL32(
+		static_cast<int>(255.0f * glm::clamp(color.r, 0.0f, 1.0f)),
+		static_cast<int>(255.0f * glm::clamp(color.g, 0.0f, 1.0f)),
+		static_cast<int>(255.0f * glm::clamp(color.b, 0.0f, 1.0f)),
+		static_cast<int>(255.0f * glm::clamp(alpha, 0.0f, 1.0f)));
+}
+
+glm::vec3 shadeHudColor(const glm::vec3 &color, float factor, float lift = 0.0f)
+{
+	return glm::clamp(color * factor + glm::vec3(lift), glm::vec3(0.0f), glm::vec3(1.0f));
+}
 }
 
 /** Tiled procedural ground ( RGB8, power-of-2 ), style similar to tiled terrain textures. */
@@ -213,6 +238,8 @@ struct PostProcessToggle {
     float ssaoRadius     = 0.75f;
     float ssaoBias       = 0.025f;
     float ssaoIntensity  = 1.0f;
+    bool  taaEnabled     = false;
+    float taaBlend       = 0.1f;
 };
 
 class Application : public EventCallbacks {
@@ -376,12 +403,14 @@ public:
 		(void)io;
 
 		ImGui::StyleColorsDark();
+		loadHudFont();
 
 		const char *glsl_version = "#version 330";
 		ImGui_ImplGlfw_InitForOpenGL(windowManager->getHandle(), true);
 		ImGui_ImplOpenGL3_Init(glsl_version);
 		if (!radialToolMenu_.init(resourceDirectory))
 			cerr << "radialToolMenu init failed" << endl;
+		initMaterialRadialMenu();
 
 		// --- Soundtrack: start looping background music. Non-fatal on failure. ---
 		if (soundtrack_.init()) {
@@ -409,7 +438,9 @@ public:
 	{
 		if (breakSfxIds_.empty()) return;
 		std::uniform_int_distribution<size_t> dist(0, breakSfxIds_.size() - 1);
-		soundtrack_.playSfx(breakSfxIds_[dist(sfxRng_)]);
+		const float volume =
+			toolManager_.activeToolKind() == ToolKind::OrganicSphere ? 0.5f : 1.0f;
+		soundtrack_.playSfx(breakSfxIds_[dist(sfxRng_)], volume);
 	}
 
 	/** Play a random place sfx (from sfx/place/stone1..4.ogg). Non-fatal. */
@@ -417,7 +448,9 @@ public:
 	{
 		if (placeSfxIds_.empty()) return;
 		std::uniform_int_distribution<size_t> dist(0, placeSfxIds_.size() - 1);
-		soundtrack_.playSfx(placeSfxIds_[dist(sfxRng_)]);
+		const float volume =
+			toolManager_.activeToolKind() == ToolKind::OrganicSphere ? 0.5f : 1.0f;
+		soundtrack_.playSfx(placeSfxIds_[dist(sfxRng_)], volume);
 	}
 
 	void spawnBreakParticles(const ChunkEditSummary &editSummary)
@@ -448,6 +481,70 @@ public:
 			}
 		}
 		breakParticles_.spawnLandingBurst(feetPos, landing.fallHeight, chunkManager->voxSizeMeters, materialID);
+	}
+
+	glm::vec3 materialColorVariant(int materialIndex, float offset) const
+	{
+		return glm::clamp(
+			Materials::paletteColor(materialIndex) + glm::vec3(offset),
+			glm::vec3(0.0f),
+			glm::vec3(1.0f));
+	}
+
+	MaterialMenuOption makeMaterialMenuOption(int materialIndex) const
+	{
+		MaterialMenuOption option;
+		option.materialIndex = materialIndex;
+		option.label = Materials::paletteName(materialIndex);
+		option.swatchColors = {{
+			materialColorVariant(materialIndex, -0.028f),
+			materialColorVariant(materialIndex, -0.010f),
+			materialColorVariant(materialIndex,  0.012f),
+			materialColorVariant(materialIndex,  0.028f),
+		}};
+		return option;
+	}
+
+	void initMaterialRadialMenu()
+	{
+		std::vector<MaterialMenuOption> options;
+		options.push_back(makeMaterialMenuOption(Materials::Grass));
+		options.push_back(makeMaterialMenuOption(Materials::Dirt));
+		options.push_back(makeMaterialMenuOption(Materials::Stone));
+		options.push_back(makeMaterialMenuOption(Materials::Brick));
+		options.push_back(makeMaterialMenuOption(Materials::Sand));
+		options.push_back(makeMaterialMenuOption(Materials::Gold));
+		materialRadialMenu_.init(options);
+	}
+
+	void loadHudFont()
+	{
+		struct FontCandidate {
+			const char *path;
+			float size;
+		};
+
+		const FontCandidate candidates[] = {
+			{"C:/Windows/Fonts/GIL_____.TTF", 24.0f},
+			{"C:/Windows/Fonts/segoeui.ttf", 23.0f},
+			{"C:/Windows/Fonts/arial.ttf", 23.0f},
+			{"/System/Library/Fonts/Supplemental/Gill Sans.ttc", 24.0f},
+			{"/System/Library/Fonts/Supplemental/Avenir Next.ttc", 23.0f},
+		};
+
+		ImGuiIO &io = ImGui::GetIO();
+		for (const FontCandidate &candidate : candidates) {
+			std::ifstream file(candidate.path);
+			if (!file.good()) {
+				continue;
+			}
+
+			hudFont_ = io.Fonts->AddFontFromFileTTF(candidate.path, candidate.size);
+			if (hudFont_) {
+				return;
+			}
+		}
+		hudFont_ = io.Fonts->Fonts.empty() ? nullptr : io.Fonts->Fonts[0];
 	}
 
 	glm::vec3 currentSunDirection() const
@@ -570,6 +667,25 @@ public:
 			ssaoBlurProg_->addUniform("texelSize");
 			ssaoBlurProg_->addUniform("invProjection");
 		}
+
+		// TAA resolve shader
+		taaProg_ = make_shared<Program>();
+		taaProg_->setVerbose(true);
+		taaProg_->setShaderNames(shaderPath(resourceDirectory, "postprocess", "screen_vert.glsl"),
+		                         shaderPath(resourceDirectory, "postprocess", "taa_resolve_frag.glsl"));
+		if (!taaProg_->init()) {
+			cerr << "taaProg failed — TAA disabled" << endl;
+			postToggles_.taaEnabled = false;
+		} else {
+			taaProg_->addUniform("currentTex");
+			taaProg_->addUniform("historyTex");
+			taaProg_->addUniform("depthTex");
+			taaProg_->addUniform("invViewProj");
+			taaProg_->addUniform("prevViewProj");
+			taaProg_->addUniform("texelSize");
+			taaProg_->addUniform("historyValid");
+			taaProg_->addUniform("blendFactor");
+		}
 	}
 
 	void teardownPostProcess()
@@ -621,6 +737,11 @@ public:
 		if (ssaoBlurFBO_) { glDeleteFramebuffers(1, &ssaoBlurFBO_); ssaoBlurFBO_ = 0; }
 		if (ssaoBlurTex_) { glDeleteTextures(1, &ssaoBlurTex_); ssaoBlurTex_ = 0; }
 		if (noiseTex_) { glDeleteTextures(1, &noiseTex_); noiseTex_ = 0; }
+		if (taaFBO_) { glDeleteFramebuffers(1, &taaFBO_); taaFBO_ = 0; }
+		for (int i = 0; i < 2; i++) {
+			if (taaHistoryTex_[i]) { glDeleteTextures(1, &taaHistoryTex_[i]); taaHistoryTex_[i] = 0; }
+		}
+		taaHistoryValid_ = false;
 		postW_ = postH_ = 0;
 	}
 
@@ -749,6 +870,27 @@ public:
 			postToggles_.ssaoEnabled = false;
 		}
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+		// TAA FBO + ping-pong history textures (full res, bilinear for history fetch)
+		glGenFramebuffers(1, &taaFBO_);
+		glGenTextures(2, taaHistoryTex_);
+		for (int i = 0; i < 2; i++) {
+			glBindTexture(GL_TEXTURE_2D, taaHistoryTex_[i]);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, nullptr);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		}
+		glBindFramebuffer(GL_FRAMEBUFFER, taaFBO_);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, taaHistoryTex_[0], 0);
+		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+			cerr << "[TAA] TAA FBO incomplete — TAA disabled" << endl;
+			postToggles_.taaEnabled = false;
+		}
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		taaHistoryIdx_ = 0;
+		taaHistoryValid_ = false;
 
 		// Generate SSAO kernel and noise texture (once)
 		if (ssaoKernel_.empty())
@@ -904,9 +1046,14 @@ public:
 		}
 	}
 
+	bool anySelectorOpen() const
+	{
+		return radialToolMenu_.isOpen() || materialRadialMenu_.isOpen();
+	}
+
 	void openRadialToolMenu(GLFWwindow *window)
 	{
-		if (radialToolMenu_.isOpen()) {
+		if (anySelectorOpen()) {
 			return;
 		}
 
@@ -932,6 +1079,36 @@ public:
 		glfwSetCursorPos(window, center.x, center.y);
 		radialToolMenu_.open(center, toolManager_.activeToolKind());
 		radialToolMenu_.updateMouse(center);
+	}
+
+	void openMaterialRadialMenu(GLFWwindow *window)
+	{
+		if (anySelectorOpen()) {
+			return;
+		}
+
+		radialMenuRestoreMouseLocked_ = mouseLocked_;
+		leftMouseDown_ = false;
+		rightMouseDown_ = false;
+		toolManager_.endAction(ToolMode::Build);
+		toolManager_.endAction(ToolMode::Delete);
+		toolView_.setContinuousUseActive(false);
+
+		mouseLocked_ = false;
+		firstMouse_ = true;
+		glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+		if (glfwRawMouseMotionSupported()) {
+			glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+		}
+
+		int windowWidth = 0, windowHeight = 0;
+		glfwGetWindowSize(window, &windowWidth, &windowHeight);
+		const ImVec2 center(static_cast<float>(windowWidth) * 0.5f, static_cast<float>(windowHeight) * 0.5f);
+		lastMouseX_ = center.x;
+		lastMouseY_ = center.y;
+		glfwSetCursorPos(window, center.x, center.y);
+		materialRadialMenu_.open(center, toolManager_.activeMaterialIndex());
+		materialRadialMenu_.updateMouse(center);
 	}
 
 	void closeRadialToolMenu(GLFWwindow *window)
@@ -963,6 +1140,48 @@ public:
 		}
 	}
 
+	void closeMaterialRadialMenu(GLFWwindow *window)
+	{
+		if (!materialRadialMenu_.isOpen()) {
+			return;
+		}
+
+		int selectedMaterial = toolManager_.activeMaterialIndex();
+		if (materialRadialMenu_.close(&selectedMaterial)) {
+			toolManager_.setActiveMaterialIndex(selectedMaterial);
+		}
+
+		leftMouseDown_ = false;
+		rightMouseDown_ = false;
+		firstMouse_ = true;
+		if (radialMenuRestoreMouseLocked_) {
+			mouseLocked_ = true;
+			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+			if (glfwRawMouseMotionSupported()) {
+				glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+			}
+		} else {
+			mouseLocked_ = false;
+			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+			if (glfwRawMouseMotionSupported()) {
+				glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+			}
+		}
+	}
+
+	bool pickLookedAtMaterial()
+	{
+		ChunkManager::VoxelRaycastHit hit;
+		const glm::vec3 eye = camera->GetCameraPos();
+		const glm::vec3 forward = glm::normalize(camera->GetForward());
+		if (!chunkManager->raycastVoxels(eye, forward, 8.0f, hit)) {
+			return false;
+		}
+
+		toolManager_.setActiveMaterialIndex(static_cast<int>(chunkManager->voxelMaterial(hit.voxel)));
+		return true;
+	}
+
 	void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods) override
 	{
 		(void)scancode;
@@ -975,8 +1194,16 @@ public:
 			}
 			return;
 		}
+		if (key == GLFW_KEY_1) {
+			if (action == GLFW_PRESS) {
+				openMaterialRadialMenu(window);
+			} else if (action == GLFW_RELEASE) {
+				closeMaterialRadialMenu(window);
+			}
+			return;
+		}
 
-		if (radialToolMenu_.isOpen()) {
+		if (anySelectorOpen()) {
 			if (action == GLFW_RELEASE) {
 				applyCameraKeyState(key, action);
 				setMovementKeyState(key, false);
@@ -1014,6 +1241,13 @@ public:
 				camera = &fpvCamera;
 			}
 		}
+		if (key == GLFW_KEY_F3 && action == GLFW_PRESS) {
+			showDebugWindow_ = !showDebugWindow_;
+		}
+
+		if (key == GLFW_KEY_2 && action == GLFW_PRESS) {
+			pickLookedAtMaterial();
+		}
 
 		applyCameraKeyState(key, action);
 
@@ -1035,39 +1269,24 @@ public:
 			cout << "[Camera yaw on idle] " << (idleYawHoldEnabled_ ? "hold after stillness (T)" : "always face camera (T)") << endl;
 		}
 
-		if (key == GLFW_KEY_G && action == GLFW_PRESS) {
-			postToggles_.godRaysEnabled = !postToggles_.godRaysEnabled;
-			cout << "[PostFX] God rays: " << (postToggles_.godRaysEnabled ? "ON" : "OFF") << endl;
-		}
 		if (key == GLFW_KEY_B && action == GLFW_PRESS) {
 			postToggles_.bloomEnabled = !postToggles_.bloomEnabled;
 			cout << "[PostFX] Bloom: " << (postToggles_.bloomEnabled ? "ON" : "OFF") << endl;
 		}
-		if (key == GLFW_KEY_O && action == GLFW_PRESS) {
-			postToggles_.ssaoEnabled = !postToggles_.ssaoEnabled;
-			cout << "[PostFX] SSAO: " << (postToggles_.ssaoEnabled ? "ON" : "OFF") << endl;
-		}
-		if (key == GLFW_KEY_0 && action == GLFW_PRESS) {
-			shadowSettings_.enabled = !shadowSettings_.enabled;
-			if (shadowSettings_.enabled) {
-				chunkManager->markShadowMapsDirty();
-			}
-			cout << "[Shadows] CSM: " << (shadowSettings_.enabled ? "ON" : "OFF") << endl;
+
+		if (key == GLFW_KEY_MINUS && action == GLFW_PRESS) {
+			postToggles_.taaEnabled = !postToggles_.taaEnabled;
+			taaHistoryValid_ = false;
+			cout << "[PostFX] TAA: " << (postToggles_.taaEnabled ? "ON" : "OFF") << endl;
 		}
 
 		if (action == GLFW_PRESS || action == GLFW_REPEAT) {
-			if (key == GLFW_KEY_LEFT) {
-				toolManager_.cycleTool(-1);
-			} else if (key == GLFW_KEY_RIGHT) {
-				toolManager_.cycleTool(1);
-			} else if (key == GLFW_KEY_LEFT_BRACKET) {
+			if (key == GLFW_KEY_LEFT_BRACKET) {
 				toolManager_.cycleSize(-1);
+				markSizeChanged();
 			} else if (key == GLFW_KEY_RIGHT_BRACKET) {
 				toolManager_.cycleSize(1);
-			} else if (key == GLFW_KEY_UP) {
-				toolManager_.cycleMaterial(1);
-			} else if (key == GLFW_KEY_DOWN) {
-				toolManager_.cycleMaterial(-1);
+				markSizeChanged();
 			}
 		}
 	}
@@ -1077,12 +1296,27 @@ public:
 		(void)window;
 		(void)mods;
 
-		if (radialToolMenu_.isOpen()) {
+		if (anySelectorOpen()) {
 			if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
 				leftMouseDown_ = false;
 			} else if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE) {
 				rightMouseDown_ = false;
 			}
+			return;
+		}
+
+		if (button == GLFW_MOUSE_BUTTON_MIDDLE && action == GLFW_PRESS) {
+			if (!mouseLocked_) {
+				mouseLocked_ = true;
+				firstMouse_ = true;
+				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+				if (glfwRawMouseMotionSupported()) {
+					glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+				}
+				return;
+			}
+
+			pickLookedAtMaterial();
 			return;
 		}
 
@@ -1144,6 +1378,12 @@ public:
 			radialToolMenu_.updateMouse(ImVec2(static_cast<float>(xpos), static_cast<float>(ypos)));
 			return;
 		}
+		if (materialRadialMenu_.isOpen()) {
+			lastMouseX_ = xpos;
+			lastMouseY_ = ypos;
+			materialRadialMenu_.updateMouse(ImVec2(static_cast<float>(xpos), static_cast<float>(ypos)));
+			return;
+		}
 		if (!mouseLocked_){
 			return;
 		}
@@ -1164,7 +1404,7 @@ public:
 	{
 		(void)window;
 		(void)xoffset;
-		if (radialToolMenu_.isOpen()) {
+		if (anySelectorOpen()) {
 			return;
 		}
 		camera->ProcessScroll(yoffset);
@@ -1172,7 +1412,7 @@ public:
 
 	void updateFixedStep(float dt)
 	{
-		const bool radialMenuOpen = radialToolMenu_.isOpen();
+		const bool radialMenuOpen = anySelectorOpen();
 		vec2 wish = radialMenuOpen
 			? vec2(0.0f)
 			: vec2(
@@ -1307,6 +1547,158 @@ public:
 		chunkManager->updateChunks();
 	}
 
+	void drawHudVoxelCube(ImDrawList *drawList, const glm::vec3 &baseColor, const ImVec2 &center, float size, float alpha) const
+	{
+		const float w = size * 0.48f;
+		const float h = size * 0.28f;
+		const float drop = size * 0.42f;
+		const float yOffset = size * 0.12f;
+
+		const ImVec2 top(center.x, center.y - h - yOffset);
+		const ImVec2 right(center.x + w, center.y - yOffset);
+		const ImVec2 bottom(center.x, center.y + h - yOffset);
+		const ImVec2 left(center.x - w, center.y - yOffset);
+		const ImVec2 bottomDrop(center.x, center.y + h + drop - yOffset);
+		const ImVec2 leftDrop(center.x - w, center.y + drop - yOffset);
+		const ImVec2 rightDrop(center.x + w, center.y + drop - yOffset);
+
+		const ImVec2 topFace[] = {top, right, bottom, left};
+		const ImVec2 leftFace[] = {left, bottom, bottomDrop, leftDrop};
+		const ImVec2 rightFace[] = {bottom, right, rightDrop, bottomDrop};
+
+		drawList->AddConvexPolyFilled(leftFace, 4, uiColorFromVec3(shadeHudColor(baseColor, 0.68f), alpha));
+		drawList->AddConvexPolyFilled(rightFace, 4, uiColorFromVec3(shadeHudColor(baseColor, 0.86f, 0.010f), alpha));
+		drawList->AddConvexPolyFilled(topFace, 4, uiColorFromVec3(shadeHudColor(baseColor, 1.10f, 0.045f), alpha));
+	}
+
+	std::string activeSizeText() const
+	{
+		char buffer[32];
+		if (toolManager_.activeToolUsesMeterRadius()) {
+			snprintf(buffer, sizeof(buffer), "%.2f m", toolManager_.activeToolRadiusMeters());
+		} else {
+			snprintf(buffer, sizeof(buffer), "%d vox", toolManager_.activeToolSize());
+		}
+		return std::string(buffer);
+	}
+
+	int activeDiscreteSizeIndex() const
+	{
+		const int sizes[] = {2, 4, 8, 16, 32, 64};
+		const int activeSize = toolManager_.activeToolSize();
+		for (int i = 0; i < 6; ++i) {
+			if (sizes[i] == activeSize) {
+				return i;
+			}
+		}
+		return 0;
+	}
+
+	void markSizeChanged()
+	{
+		sizePulseStartSeconds_ = glfwGetTime();
+	}
+
+	std::string cameraStatusText() const
+	{
+		if (camera == &freeCamera) {
+			return "Freecam";
+		}
+		if (fpvCamera.IsFlyMode()) {
+			return "Player - Flying";
+		}
+		return "Player";
+	}
+
+	void drawGameplayHud(int width, int height)
+	{
+		(void)width;
+		(void)height;
+		const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+		const float hudWidth = displaySize.x;
+		ImDrawList *drawList = ImGui::GetForegroundDrawList();
+		const float hudMargin = 18.0f;
+		ImFont *font = hudFont_ ? hudFont_ : ImGui::GetFont();
+		const float panelWidth = std::min(640.0f, std::max(430.0f, hudWidth - 36.0f));
+		const float panelHeight = 64.0f;
+		const ImVec2 panelMin(hudMargin, hudMargin);
+		const ImVec2 panelMax(panelMin.x + panelWidth, panelMin.y + panelHeight);
+
+		drawList->AddRectFilled(panelMin, panelMax, uiRgba(10, 14, 20, 0.48f), 6.0f);
+
+		const float col0 = panelMin.x + 18.0f;
+		const float col1 = panelMin.x + panelWidth * 0.31f;
+		const float col2 = panelMin.x + panelWidth * 0.66f;
+		const float labelY = panelMin.y + 11.0f;
+		const float valueY = panelMin.y + 30.0f;
+		const ImU32 labelColor = uiRgba(202, 212, 224, 0.72f);
+		const ImU32 valueColor = uiRgba(244, 249, 249, 0.94f);
+
+		drawList->AddLine(ImVec2(col1 - 14.0f, panelMin.y + 12.0f), ImVec2(col1 - 14.0f, panelMax.y - 12.0f), uiRgba(255, 255, 255, 0.10f), 1.0f);
+		drawList->AddLine(ImVec2(col2 - 14.0f, panelMin.y + 12.0f), ImVec2(col2 - 14.0f, panelMax.y - 12.0f), uiRgba(255, 255, 255, 0.10f), 1.0f);
+
+		drawList->AddText(font, 15.0f, ImVec2(col0, labelY), labelColor, "Tool");
+		drawList->AddText(font, 24.0f, ImVec2(col0, valueY), valueColor, toolManager_.activeToolName());
+
+		drawList->AddText(font, 15.0f, ImVec2(col1, labelY), labelColor, "Material");
+		const glm::vec3 materialColor = Materials::paletteColor(toolManager_.activeMaterialIndex());
+		drawHudVoxelCube(drawList, materialColor, ImVec2(col1 + 18.0f, valueY + 16.0f), 28.0f, 0.94f);
+		drawList->AddText(font, 22.0f, ImVec2(col1 + 44.0f, valueY + 2.0f), valueColor, toolManager_.activeMaterialName());
+
+		const double sizePulseAge = glfwGetTime() - sizePulseStartSeconds_;
+		const float sizePulse = (sizePulseAge >= 0.0 && sizePulseAge < 0.75)
+			? static_cast<float>(1.0 - sizePulseAge / 0.75)
+			: 0.0f;
+		if (sizePulse > 0.0f) {
+			drawList->AddRectFilled(ImVec2(col2 - 4.0f, panelMin.y + 8.0f), ImVec2(panelMax.x - 12.0f, panelMax.y - 8.0f), uiRgba(255, 255, 255, 0.12f * sizePulse), 5.0f);
+		}
+
+		drawList->AddText(font, 15.0f, ImVec2(col2, labelY), labelColor, "Size");
+		const std::string sizeText = activeSizeText();
+		drawList->AddText(font, 24.0f, ImVec2(col2, valueY), valueColor, sizeText.c_str());
+
+		const float sizeTextWidth = font->CalcTextSizeA(24.0f, FLT_MAX, 0.0f, sizeText.c_str()).x;
+		const float meterRight = panelMax.x - 20.0f;
+		const float meterX = std::min(meterRight - 92.0f, col2 + sizeTextWidth + 28.0f);
+		const float meterWidth = std::max(56.0f, meterRight - meterX);
+		const float meterY = valueY + 14.0f;
+		if (toolManager_.activeToolUsesMeterRadius()) {
+			const float t = glm::clamp((toolManager_.activeToolRadiusMeters() - 0.25f) / (8.0f - 0.25f), 0.0f, 1.0f);
+			drawList->AddRectFilled(ImVec2(meterX, meterY), ImVec2(meterX + meterWidth, meterY + 7.0f), uiRgba(255, 255, 255, 0.16f), 3.0f);
+			drawList->AddRectFilled(ImVec2(meterX, meterY), ImVec2(meterX + meterWidth * t, meterY + 7.0f), uiRgba(244, 249, 249, 0.78f), 3.0f);
+		} else {
+			const int activeIndex = activeDiscreteSizeIndex();
+			for (int i = 0; i < 6; ++i) {
+				const float step = (meterWidth - 8.0f) / 5.0f;
+				const float x = meterX + static_cast<float>(i) * step;
+				const float alpha = (i <= activeIndex) ? 0.82f : 0.20f;
+				drawList->AddRectFilled(ImVec2(x, meterY - 1.0f), ImVec2(x + 8.0f, meterY + 7.0f), uiRgba(244, 249, 249, alpha), 2.0f);
+			}
+		}
+
+		const float statusStripWidth = panelWidth / 3.0f;
+		const float statusStripHeight = 40.0f;
+		const ImVec2 statusMin(panelMin.x, panelMax.y + 6.0f);
+		const ImVec2 statusMax(statusMin.x + statusStripWidth, statusMin.y + statusStripHeight);
+		drawList->AddRectFilled(statusMin, statusMax, uiRgba(10, 14, 20, 0.48f), 5.0f);
+
+		const float statusLabelX = statusMin.x + 12.0f;
+		const float statusLabelY = statusMin.y + 6.0f;
+		const float statusValueY = statusMin.y + 18.0f;
+		drawList->AddText(font, 13.0f, ImVec2(statusLabelX, statusLabelY), labelColor, "Status");
+		drawList->AddText(font, 18.0f, ImVec2(statusLabelX, statusValueY), valueColor, cameraStatusText().c_str());
+
+		char fpsText[16];
+		snprintf(fpsText, sizeof(fpsText), "%.0f", ImGui::GetIO().Framerate);
+		const float fpsPanelHeight = 40.0f;
+		const float fpsPanelWidth = std::max(72.0f, font->CalcTextSizeA(18.0f, FLT_MAX, 0.0f, fpsText).x + 24.0f);
+		const ImVec2 fpsMax(hudWidth - hudMargin, hudMargin + fpsPanelHeight);
+		const ImVec2 fpsMin(fpsMax.x - fpsPanelWidth, hudMargin);
+		drawList->AddRectFilled(fpsMin, fpsMax, uiRgba(10, 14, 20, 0.48f), 5.0f);
+		drawList->AddText(font, 13.0f, ImVec2(fpsMin.x + 12.0f, fpsMin.y + 6.0f), labelColor, "FPS");
+		drawList->AddText(font, 18.0f, ImVec2(fpsMin.x + 12.0f, fpsMin.y + 18.0f), valueColor, fpsText);
+	}
+
 	void render()
 	{
 		int width = 0, height = 0;
@@ -1322,6 +1714,16 @@ public:
 		mat4 V = camera->GetViewMatrix();
 		Pstack.popMatrix();
 		const vec3 sunDir = currentSunDirection();
+
+		// Sub-pixel jitter for TAA — applied to the scene-render projection only.
+		// Shadows, sun projection, and SSAO keep the unjittered P.
+		mat4 Pjit = P;
+		if (postToggles_.taaEnabled && postW_ > 0 && postH_ > 0) {
+			glm::vec2 jitter = (haltonJitter(taaFrame_ % 8) - glm::vec2(0.5f)) * 2.0f
+			                   / glm::vec2((float)postW_, (float)postH_);
+			Pjit[2][0] += jitter.x;
+			Pjit[2][1] += jitter.y;
+		}
 
 		if (shadowSettings_.enabled && shadowMap_.isReady()) {
 			if (chunkManager->isShadowMapsDirty() || chunkManager->hasPendingBufferUpdates()) {
@@ -1345,10 +1747,43 @@ public:
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		if (wireframe_)
 			glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-		drawScene3D(P, V, sunDir);
+		drawScene3D(Pjit, V, sunDir);
 		if (wireframe_)
 			glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+		// --- TAA resolve: reproject + blend history, output feeds the rest of post ---
+		GLuint sceneInputTex = sceneColorTex_;
+		if (postToggles_.taaEnabled && taaFBO_ != 0) {
+			int writeIdx = 1 - taaHistoryIdx_;
+			glBindFramebuffer(GL_FRAMEBUFFER, taaFBO_);
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, taaHistoryTex_[writeIdx], 0);
+			glViewport(0, 0, postW_, postH_);
+			glClear(GL_COLOR_BUFFER_BIT);
+			taaProg_->bind();
+			mat4 invVP = glm::inverse(Pjit * V);
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
+			glUniform1i(taaProg_->getUniform("currentTex"), 0);
+			glActiveTexture(GL_TEXTURE1);
+			glBindTexture(GL_TEXTURE_2D, taaHistoryTex_[taaHistoryIdx_]);
+			glUniform1i(taaProg_->getUniform("historyTex"), 1);
+			glActiveTexture(GL_TEXTURE2);
+			glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
+			glUniform1i(taaProg_->getUniform("depthTex"), 2);
+			glUniformMatrix4fv(taaProg_->getUniform("invViewProj"), 1, GL_FALSE, value_ptr(invVP));
+			glUniformMatrix4fv(taaProg_->getUniform("prevViewProj"), 1, GL_FALSE, value_ptr(prevViewProj_));
+			glUniform2f(taaProg_->getUniform("texelSize"), 1.0f / (float)postW_, 1.0f / (float)postH_);
+			glUniform1i(taaProg_->getUniform("historyValid"), (taaHistoryValid_ && sceneDepthTex_ != 0) ? 1 : 0);
+			glUniform1f(taaProg_->getUniform("blendFactor"), postToggles_.taaBlend);
+			drawFullscreenQuad();
+			taaProg_->unbind();
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+			sceneInputTex = taaHistoryTex_[writeIdx];
+			taaHistoryIdx_ = writeIdx;
+			taaHistoryValid_ = true;
+		}
 
 		const SunProjection sunProj = projectSunToScreen(P, V, sunWorld_);
 		const vec2  sunScreen      = sunProj.sunScreen;
@@ -1368,7 +1803,7 @@ public:
 			glClear(GL_COLOR_BUFFER_BIT);
 			godrayProg_->bind();
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
+			glBindTexture(GL_TEXTURE_2D, sceneInputTex);
 			glUniform1i(godrayProg_->getUniform("sceneTex"), 0);
 			glUniform2f(godrayProg_->getUniform("sunPos"), sunScreen.x, sunScreen.y);
 			glUniform1f(godrayProg_->getUniform("time"), (float)glfwGetTime());
@@ -1387,7 +1822,7 @@ public:
 			glClear(GL_COLOR_BUFFER_BIT);
 			bloomBrightProg_->bind();
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
+			glBindTexture(GL_TEXTURE_2D, sceneInputTex);
 			glUniform1i(bloomBrightProg_->getUniform("sceneTex"), 0);
 			drawFullscreenQuad();
 			bloomBrightProg_->unbind();
@@ -1423,7 +1858,7 @@ public:
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		compositeProg_->bind();
 		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
+		glBindTexture(GL_TEXTURE_2D, sceneInputTex);
 		glUniform1i(compositeProg_->getUniform("sceneTex"), 0);
 		glActiveTexture(GL_TEXTURE1);
 		glBindTexture(GL_TEXTURE_2D, godrayTex_);
@@ -1467,47 +1902,64 @@ public:
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
-		ImGui::Begin("Debug");
+		drawGameplayHud(width, height);
 
-		ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-		ImGui::Text("Camera Pos: %.2f %.2f %.2f",
-					camera->GetCameraPos().x,
-					camera->GetCameraPos().y,
-					camera->GetCameraPos().z);
-		ImGui::Text("Sun Pos: %.2f %.2f %.2f", sunWorld_.x, sunWorld_.y, sunWorld_.z);
-		ImGui::Text("Tool: %s", toolManager_.activeToolName());
-		ImGui::Text("Material: %s", toolManager_.activeMaterialName());
-		ImGui::Text("Birds: %zu", birdFlock_.birdCount());
-		if (toolManager_.activeToolUsesMeterRadius()) {
-			ImGui::Text("Tool Size: %.2f m", toolManager_.activeToolRadiusMeters());
-		} else {
-			ImGui::Text("Tool Size: %d", toolManager_.activeToolSize());
-		}
+		if (showDebugWindow_) {
+			ImGui::Begin("Debug");
 
-		ImGui::Checkbox("God Rays", &postToggles_.godRaysEnabled);
-		ImGui::Checkbox("Bloom", &postToggles_.bloomEnabled);
-		ImGui::Checkbox("SSAO", &postToggles_.ssaoEnabled);
-		{
-			bool shadowsEnabled = shadowSettings_.enabled;
-			if (ImGui::Checkbox("Shadows", &shadowsEnabled)) {
-				if (shadowsEnabled) {
-					chunkManager->markShadowMapsDirty();
-				}
-				shadowSettings_.enabled = shadowsEnabled;
+			ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+			ImGui::Text("Camera Pos: %.2f %.2f %.2f",
+						camera->GetCameraPos().x,
+						camera->GetCameraPos().y,
+						camera->GetCameraPos().z);
+			ImGui::Text("Sun Pos: %.2f %.2f %.2f", sunWorld_.x, sunWorld_.y, sunWorld_.z);
+			ImGui::Text("Tool: %s", toolManager_.activeToolName());
+			ImGui::Text("Material: %s", toolManager_.activeMaterialName());
+			ImGui::Text("Birds: %zu", birdFlock_.birdCount());
+			if (toolManager_.activeToolUsesMeterRadius()) {
+				ImGui::Text("Tool Size: %.2f m", toolManager_.activeToolRadiusMeters());
+			} else {
+				ImGui::Text("Tool Size: %d", toolManager_.activeToolSize());
 			}
-		}
-		ImGui::SliderFloat("Shadow Strength", &shadowSettings_.shadowStrength, 0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat("Shadow Softness", &shadowSettings_.blurTexels, 0.25f, 3.0f, "%.2f");
-		ImGui::SliderFloat("Shadow Min Light", &shadowSettings_.minShadowVisibility, 0.2f, 1.0f, "%.2f");
 
-		if (ImGui::SliderFloat("Music", &musicVolume_, 0.0f, 1.0f, "%.2f")) {
-			soundtrack_.setVolume(musicVolume_);
-		}
+			ImGui::Checkbox("God Rays", &postToggles_.godRaysEnabled);
+			ImGui::Checkbox("Bloom", &postToggles_.bloomEnabled);
+			ImGui::Checkbox("SSAO", &postToggles_.ssaoEnabled);
+			{
+				bool taaEnabled = postToggles_.taaEnabled;
+				if (ImGui::Checkbox("TAA (-)", &taaEnabled)) {
+					postToggles_.taaEnabled = taaEnabled;
+					taaHistoryValid_ = false;
+				}
+			}
+			ImGui::SliderFloat("TAA Blend", &postToggles_.taaBlend, 0.5f, 0.97f, "%.2f");
+			{
+				bool shadowsEnabled = shadowSettings_.enabled;
+				if (ImGui::Checkbox("Shadows", &shadowsEnabled)) {
+					if (shadowsEnabled) {
+						chunkManager->markShadowMapsDirty();
+					}
+					shadowSettings_.enabled = shadowsEnabled;
+				}
+			}
+			ImGui::SliderFloat("Shadow Strength", &shadowSettings_.shadowStrength, 0.0f, 1.0f, "%.2f");
+			ImGui::SliderFloat("Shadow Softness", &shadowSettings_.blurTexels, 0.25f, 3.0f, "%.2f");
+			ImGui::SliderFloat("Shadow Min Light", &shadowSettings_.minShadowVisibility, 0.2f, 1.0f, "%.2f");
 
-		ImGui::End();
+			if (ImGui::SliderFloat("Music", &musicVolume_, 0.0f, 1.0f, "%.2f")) {
+				soundtrack_.setVolume(musicVolume_);
+			}
+
+			ImGui::End();
+		}
 		radialToolMenu_.draw();
+		materialRadialMenu_.draw();
 		ImGui::Render();
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+		// Store unjittered view-projection for next frame's TAA reprojection.
+		prevViewProj_ = P * V;
+		taaFrame_++;
 	}
 
 private:
@@ -1518,6 +1970,9 @@ private:
 	float animTime_ = 0.0f;
 	float moveBlendDisplay_ = 0.0f;
 	float characterScale_ = 1.0f;
+	ImFont *hudFont_ = nullptr;
+	bool showDebugWindow_ = false;
+	double sizePulseStartSeconds_ = -100.0;
 
 	FirstPersonCamera fpvCamera;
 	FreeCamera freeCamera;
@@ -1526,6 +1981,7 @@ private:
 	ToolManager toolManager_;
 	ToolPreviewRenderer previewRenderer_;
 	RadialToolMenu radialToolMenu_;
+	MaterialRadialMenu materialRadialMenu_;
 	Crosshair crosshair_;
 	Skybox skybox_;
 	BreakParticleSystem breakParticles_;
@@ -1538,6 +1994,7 @@ private:
 	shared_ptr<Program> shadowDepthProg_;
 	shared_ptr<Program> ssaoProg_;
 	shared_ptr<Program> ssaoBlurProg_;
+	shared_ptr<Program> taaProg_;
 	shared_ptr<Materials> materials = make_shared<Materials>();
 	shared_ptr<ChunkManager> chunkManager = make_shared<ChunkManager>(
 	16,// voxPerMeter 
@@ -1566,6 +2023,28 @@ private:
 	GLuint noiseTex_ = 0;
 	std::vector<glm::vec3> ssaoKernel_;
 	int postW_ = 0, postH_ = 0;
+
+	// TAA (temporal anti-aliasing)
+	GLuint taaFBO_ = 0;
+	GLuint taaHistoryTex_[2] = {0, 0};
+	int taaHistoryIdx_ = 0;
+	bool taaHistoryValid_ = false;
+	glm::mat4 prevViewProj_ = glm::mat4(1.0f);
+	unsigned int taaFrame_ = 0;
+
+	// Halton(2,3) sub-pixel jitter sequence in [0,1).
+	static glm::vec2 haltonJitter(unsigned int index) {
+		auto halton = [](unsigned int i, unsigned int base) {
+			float f = 1.0f, r = 0.0f;
+			while (i > 0) {
+				f /= (float)base;
+				r += f * (float)(i % base);
+				i /= base;
+			}
+			return r;
+		};
+		return glm::vec2(halton(index + 1, 2), halton(index + 1, 3));
+	}
 
 	GameWorld world_;
 	BirdFlock birdFlock_;

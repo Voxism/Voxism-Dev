@@ -247,9 +247,20 @@ vec3 cookTorranceBRDF(vec3 matDiffuse, float matRoughnessFactor, float matMetall
     vec3 ks = F;
     vec3 kd = mix(vec3(1.0) - F, vec3(0.0), matMetallicFactor);
     vec3 diffuse = matDiffuse / PI;
-    vec3 ambient = mix(matDiffuse * vec3(0.15), matDiffuse * 0.12, matMetallicFactor);
 
-    vec3 direct = (kd * diffuse + ks * specular) * lightColor * max(0.0, dot(normal, dirToLight));
+    // Wrap lighting softens the terminator on cube faces so sides stay readable.
+    const float wrap = 0.32;
+    float ndotl = dot(normal, dirToLight);
+    float diffuseTerm = clamp((ndotl + wrap) / (1.0 + wrap), 0.0, 1.0);
+
+    vec3 direct = (kd * diffuse + ks * specular) * lightColor * diffuseTerm;
+
+    // Fill for geometric back-faces only; cascaded shadows stay on direct * visibility.
+    vec3 hemi = mix(matDiffuse * vec3(0.06, 0.05, 0.04),
+                    matDiffuse * vec3(0.10, 0.12, 0.15),
+                    normal.y * 0.5 + 0.5);
+    vec3 ambient = matDiffuse * 0.18 + hemi;
+
     return ambient + direct * directVisibility;
 }
 
