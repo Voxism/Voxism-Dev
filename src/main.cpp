@@ -1118,6 +1118,19 @@ public:
 		}
 	}
 
+	bool pickLookedAtMaterial()
+	{
+		ChunkManager::VoxelRaycastHit hit;
+		const glm::vec3 eye = camera->GetCameraPos();
+		const glm::vec3 forward = glm::normalize(camera->GetForward());
+		if (!chunkManager->raycastVoxels(eye, forward, 8.0f, hit)) {
+			return false;
+		}
+
+		toolManager_.setActiveMaterialIndex(static_cast<int>(chunkManager->voxelMaterial(hit.voxel)));
+		return true;
+	}
+
 	void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods) override
 	{
 		(void)scancode;
@@ -1201,41 +1214,18 @@ public:
 			cout << "[Camera yaw on idle] " << (idleYawHoldEnabled_ ? "hold after stillness (T)" : "always face camera (T)") << endl;
 		}
 
-		if (key == GLFW_KEY_G && action == GLFW_PRESS) {
-			postToggles_.godRaysEnabled = !postToggles_.godRaysEnabled;
-			cout << "[PostFX] God rays: " << (postToggles_.godRaysEnabled ? "ON" : "OFF") << endl;
-		}
 		if (key == GLFW_KEY_B && action == GLFW_PRESS) {
 			postToggles_.bloomEnabled = !postToggles_.bloomEnabled;
 			cout << "[PostFX] Bloom: " << (postToggles_.bloomEnabled ? "ON" : "OFF") << endl;
 		}
-		if (key == GLFW_KEY_O && action == GLFW_PRESS) {
-			postToggles_.ssaoEnabled = !postToggles_.ssaoEnabled;
-			cout << "[PostFX] SSAO: " << (postToggles_.ssaoEnabled ? "ON" : "OFF") << endl;
-		}
-		if (key == GLFW_KEY_0 && action == GLFW_PRESS) {
-			shadowSettings_.enabled = !shadowSettings_.enabled;
-			if (shadowSettings_.enabled) {
-				chunkManager->markShadowMapsDirty();
-			}
-			cout << "[Shadows] CSM: " << (shadowSettings_.enabled ? "ON" : "OFF") << endl;
-		}
 
 		if (action == GLFW_PRESS || action == GLFW_REPEAT) {
-			if (key == GLFW_KEY_LEFT) {
-				toolManager_.cycleTool(-1);
-			} else if (key == GLFW_KEY_RIGHT) {
-				toolManager_.cycleTool(1);
-			} else if (key == GLFW_KEY_LEFT_BRACKET) {
+			if (key == GLFW_KEY_LEFT_BRACKET) {
 				toolManager_.cycleSize(-1);
 				markSizeChanged();
 			} else if (key == GLFW_KEY_RIGHT_BRACKET) {
 				toolManager_.cycleSize(1);
 				markSizeChanged();
-			} else if (key == GLFW_KEY_UP) {
-				toolManager_.cycleMaterial(1);
-			} else if (key == GLFW_KEY_DOWN) {
-				toolManager_.cycleMaterial(-1);
 			}
 		}
 	}
@@ -1251,6 +1241,21 @@ public:
 			} else if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE) {
 				rightMouseDown_ = false;
 			}
+			return;
+		}
+
+		if (button == GLFW_MOUSE_BUTTON_MIDDLE && action == GLFW_PRESS) {
+			if (!mouseLocked_) {
+				mouseLocked_ = true;
+				firstMouse_ = true;
+				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+				if (glfwRawMouseMotionSupported()) {
+					glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+				}
+				return;
+			}
+
+			pickLookedAtMaterial();
 			return;
 		}
 
