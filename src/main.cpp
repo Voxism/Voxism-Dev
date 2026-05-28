@@ -1240,7 +1240,7 @@ private:
 	32,// renderDistance (in meters)
 	16,// renderHeight (int meters)
 	32,// generationDistance (in meters)
-	32 // generationHeight (in meters)
+	64 // generationHeight (in meters)
 	);
 	unsigned long frameNumber = 0;
 
