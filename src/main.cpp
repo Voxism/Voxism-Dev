@@ -241,6 +241,7 @@ public:
 
 		sunWorld_ = vec3(12.0f, 30.0f, 20.0f);
 
+		chunkManager->loadFloraAssets(resourceDirectory);
 
 		chunkManager->generateChunks(vec3(0,0,0));
 

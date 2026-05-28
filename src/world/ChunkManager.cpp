@@ -51,9 +51,20 @@ ChunkManager::ChunkManager(
     octaves.push_back(Octave{0.3f, 0.35f, 0.5f});
     octaves.push_back(Octave{0.6f, 0.15f, 0.5f});
     octaves.push_back(Octave{3.0f, 0.07f, 0.0f});
-    terrainGenerator = std::make_unique<TerrainGenerator>(terrainMinChunks, terrainMaxChunks, this->chunkSizeMeters, octaves, 1337u);
+    const uint32_t terrainSeed = 1337u;
+    terrainGenerator = std::make_unique<TerrainGenerator>(terrainMinChunks, terrainMaxChunks, this->chunkSizeMeters, octaves, terrainSeed);
 };
 ChunkManager::~ChunkManager() = default;
+
+bool ChunkManager::loadFloraAssets(const std::string &resourceDirectory)
+{
+    std::string error;
+    if (!terrainGenerator->loadFloraAssets(resourceDirectory, error)) {
+        std::cerr << "Flora asset load failed: " << error << std::endl;
+        return false;
+    }
+    return true;
+}
 
 ChunkPos ChunkManager::getChunkPos(const glm::vec3& pos) const{
     // This math keeps the chunk position rounded down even if negative.
@@ -540,7 +551,7 @@ void ChunkManager::generateChunks(glm::vec3 center){
                                 // std::cout << "ChunkGen (" << chunkPos.x << ", " << chunkPos.y << ", " << chunkPos.z << ") " << std::fixed << std::setprecision(4) << totalTime << "s" << std::endl;
                             }
                             {
-                                std::lock_guard<std::mutex> lock(bufferQueueMutex);
+                                std::lock_guard<std::mutex> lockQueue(bufferQueueMutex);
                                 bufferUpdateQueue.push_back(chunkPtr);
                             }
                         }
@@ -563,6 +574,10 @@ void ChunkManager::generateChunks(glm::vec3 center){
                                 modifyChunks(rock);
                             }
                         }
+                    }
+                    std::vector<shared_ptr<IChunkModifier>> flora = terrainGenerator->generateFlora(x, z, heightMap, *this);
+                    for (auto &feature : flora) {
+                        modifyChunks(feature);
                     }
                 });
             }

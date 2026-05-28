@@ -30,9 +30,25 @@ class Materials {
             Brick = 2,
             Sand = 3,
             Dirt = 4,
-            Gold = 5
+            Gold = 5,
+            DB16Black = 6,
+            DB16Purple = 7,
+            DB16Navy = 8,
+            DB16Slate = 9,
+            DB16Brown = 10,
+            DB16DarkGreen = 11,
+            DB16Red = 12,
+            DB16Gray = 13,
+            DB16Blue = 14,
+            DB16Orange = 15,
+            DB16Silver = 16,
+            DB16Green = 17,
+            DB16Peach = 18,
+            DB16Cyan = 19,
+            DB16Yellow = 20,
+            DB16White = 21
         };
-        const static int paletteCount = 6;
+        const static int paletteCount = 25;
 
         Materials();
 
