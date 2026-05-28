@@ -30,6 +30,12 @@ void BoundedChunkModifier::getTouchedChunkBounds(ChunkPos &minChunk, ChunkPos &m
     };
 }
 
+void BoundedChunkModifier::getAffectedVoxelBounds(glm::ivec3 &minVoxel, glm::ivec3 &maxVoxel) const
+{
+    minVoxel = minVoxel_;
+    maxVoxel = maxVoxel_;
+}
+
 void BoundedChunkModifier::applyToChunk(Chunk &chunk, const ChunkPos &chunkPos) const
 {
     if (isEmpty()) {

@@ -8,14 +8,30 @@
 #include <memory>
 #include <iomanip>
 #include <deque>
+#include <thread>
+#include <atomic>
+#include <glm/glm.hpp>
 #include "modifiers/IChunkModifier.h"
-#include "TerrainGenerator.h"
+#include "PerlinNoise.h"
+// #include "TerrainGenerator.h"
+class TerrainGenerator;
+#include "ChunkEdit.h"
+
+#include "../threads/ThreadPool.h"
+#include <shared_mutex>
+#include <../camera/FirstPersonCamera.h>
+#include <../camera/Frustum.h>
 
 class ChunkManager {
     public:
         //initialize with the standard size of the world chunks.
-        ChunkManager(int voxPerMeter, float chunkSizeMeters, int renderDistance, int renderHeight);
+        ChunkManager(int voxPerMeter, 
+                     float chunkSizeMeters, 
+                     int renderDistance, int renderHeight,
+                     int generationDistance, int generationHeight);
+        ~ChunkManager();
         int renderDistance, renderHeight;
+        int generationDistance, generationHeight;
         int terrainMinChunks, terrainMaxChunks;
         int voxPerMeter; // how many voxels there are per meter
         float voxSizeMeters; // how large in meters each voxel is.
@@ -29,6 +45,7 @@ class ChunkManager {
         glm::ivec3 worldToVoxel(const glm::vec3 &pos) const;
         glm::ivec3 worldToLocalVoxel(const glm::ivec3 &voxel) const;
         bool isVoxelOccupied(const glm::ivec3 &voxel);
+        uint8_t voxelMaterial(const glm::ivec3 &voxel) const;
         bool isAnyVoxelOccupied(const glm::ivec3 &minVoxel, const glm::ivec3 &maxVoxel) const;
 
         struct VoxelRaycastHit {
@@ -45,13 +62,16 @@ class ChunkManager {
             float maxDistance,
             VoxelRaycastHit &outHit);
 
-        std::shared_ptr<Chunk> generateChunk(ChunkPos& chunkPos);
+        // std::shared_ptr<Chunk> generateChunk(ChunkPos& chunkPos);
         std::shared_ptr<Chunk> getChunk(const ChunkPos &chunkPos) const;
-        const TerrainGenerator& terrain() const { return *terrainGenerator; }
+        const TerrainGenerator& terrain() const { return *terrainGenerator; };
+
+
+        void generateChunks(glm::vec3 center);
 
         // Modify chunk is given the modifier that is then parsed and attached to the chunks it effects.
         // Chunks are then marked and setup for occupancy updates.
-        void modifyChunks(const std::shared_ptr<IChunkModifier> &chunkMod);
+        ChunkEditSummary modifyChunks(const std::shared_ptr<IChunkModifier> &chunkMod);
 
         // updates the occupancy array and any color information for some
         // chunks in the update array.
@@ -59,7 +79,7 @@ class ChunkManager {
 
         // Determines what chunks should be drawn and then
         // binds the chunk data and draws it.
-        void drawChunks(const Program& prog);
+        void drawChunks(const Program& prog, const FirstPersonCamera& fpc, const Frustum& frustum, unsigned long frameNumber);
        
     private:
         // Stuct necessary for mapping an xyz of the chunk to the chunk.
@@ -72,13 +92,28 @@ class ChunkManager {
             }
         };
         std::unordered_map<ChunkPos, std::shared_ptr<Chunk>, ChunkPosHash> chunkMap;
-        std::unique_ptr<TerrainGenerator> terrainGenerator;
+        mutable std::mutex chunkMapMutex;
+        std::mutex bufferQueueMutex;
+        ThreadPool occupancyUpdatePool;
+        ThreadPool meshUpdatePool;
+        ThreadPool bufferUpdatePool;
+        ThreadPool chunkGenerationPool;
 
+        PerlinNoise noise;
+
+        std::shared_ptr<TerrainGenerator> terrainGenerator;
         std::deque<std::shared_ptr<Chunk>> occupancyUpdateQueue;
         std::deque<std::shared_ptr<Chunk>> meshUpdateQueue;
+        std::deque<std::shared_ptr<Chunk>> bufferUpdateQueue; //buffers must be updated on the main thread.
 
+        template<typename Func>
+        void forEachChunkInGenerationDistance(glm::vec3 center, Func func);
         void queueOccupancyUpdate(const std::shared_ptr<Chunk> &chunk);
         void queueMeshUpdate(const std::shared_ptr<Chunk> &chunk);
+        void collectDeletedVoxels(const IChunkModifier &chunkMod,
+            const glm::ivec3 &minVoxel,
+            const glm::ivec3 &maxVoxel,
+            ChunkEditSummary &summary) const;
 };
 
 #endif

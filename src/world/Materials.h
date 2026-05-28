@@ -6,17 +6,20 @@
 #include <glm/glm.hpp>
 
 #include <glad/glad.h>
-#include <GLFW/glfw3.h>
 
 #include <vector>
 #include "../Program.h"
 
 struct Material{
-    glm::vec4 ambient;
     glm::vec4 diffuse;
-    glm::vec4 specular;
-    float shininess;
-    float padding[3];
+    float roughness;
+    float metallic;
+    float paddnig[2];
+    // glm::vec4 ambient;
+    // glm::vec4 diffuse;
+    // glm::vec4 specular;
+    // float shininess;
+    // float padding[3];
 };
 
 class Materials {
@@ -39,6 +42,7 @@ class Materials {
         size_t count() const { return materials.size(); }
 
         static const char *paletteName(int index);
+        static glm::vec3 paletteColor(int index);
 
     private:
         std::vector<Material> materials;

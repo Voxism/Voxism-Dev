@@ -1,6 +1,8 @@
 #include "Chunk.h"
 #include "ChunkManager.h"
+#include "TerrainGenerator.h"
 #include <algorithm>
+#include <chrono>
 
 Chunk::Chunk(ChunkManager& cm, ChunkPos& cp):
     cm(cm),
@@ -13,6 +15,8 @@ Chunk::Chunk(ChunkManager& cm, ChunkPos& cp):
     {
     // intiialize chunk to zeros.
     occupancyInts = std::vector<uint32_t>(cm.occupancyXsize*cm.occupancyYsize*cm.occupancyZsize, 0); 
+    int textureSize = cm.chunkSizeInts*16;
+    cTexData = std::vector<uint8_t>(textureSize * textureSize * textureSize, 1u);
     // intialize const for world position of chunk.
     worldcp = glm::vec3(cp.x*cm.chunkSizeMeters, 
                         cp.y*cm.chunkSizeMeters, 
@@ -21,8 +25,30 @@ Chunk::Chunk(ChunkManager& cm, ChunkPos& cp):
     assert(bufferUpdateMethod >= 0 && bufferUpdateMethod <= 2);
 }
 
+// returns if framenumber was updated, updates only if there is a change.
+bool Chunk::updateFrameNumber(unsigned long frameNumber){
+    if (this->frameNumber != frameNumber){
+        this->frameNumber = frameNumber;
+        return true;
+    } else {
+        return false;
+    }
+}
+
+bool Chunk::isEmpty(){
+    if (eBuff.size() == 0){
+        return true;
+    } else {
+        return false;
+    }
+}
+
 void Chunk::queueModifier(const std::shared_ptr<IChunkModifier> &modifier)
 {
+    if (!modifier) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex);
     modifierUpdateQueue.push_back(modifier);
 }
 
@@ -54,11 +80,40 @@ bool Chunk::isOccupiedLocal(int x, int y, int z) const
         return false;
     }
 
+    std::lock_guard<std::mutex> lock(mutex);
     const int intX = x / 32;
     const int bit = 31 - (x % 32);
     const int occupancyIndex = z * cm.occupancyXsize * cm.occupancyYsize +
         y * cm.occupancyXsize + intX;
     return (occupancyInts[occupancyIndex] & (1u << bit)) != 0u;
+}
+
+bool Chunk::isOccupiedLocalUnlocked(int x, int y, int z) const
+{
+    if (!isLocalInBounds(x, y, z)) {
+        return false;
+    }
+
+    const int intX = x / 32;
+    const int bit = 31 - (x % 32);
+    const int occupancyIndex = z * cm.occupancyXsize * cm.occupancyYsize +
+        y * cm.occupancyXsize + intX;
+    return (occupancyInts[occupancyIndex] & (1u << bit)) != 0u;
+}
+
+uint8_t Chunk::getMaterialLocalUnlocked(int x, int y, int z) const
+{
+    if (!isLocalInBounds(x, y, z) || cTexData.empty()) {
+        return 0;
+    }
+
+    const int texX = x / 2;
+    const int texY = y / 2;
+    const int texZ = z / 2;
+    const int textureSize = cm.chunkSizeInts * 16;
+    const int texIndex = texZ * textureSize * textureSize +
+        texY * textureSize + texX;
+    return cTexData[texIndex];
 }
 
 void Chunk::setOccupiedLocal(int x, int y, int z, bool occupied)
@@ -112,6 +167,7 @@ void Chunk::setMaterialLocal(int x, int y, int z, uint8_t materialID)
 void Chunk::uploadDirtyMaterialRegion()
 {
     if (!materialDirty_ || cTexData.empty()) {
+        std::cout<< "Nothing to Set" << std::endl;
         return;
     }
 
@@ -145,20 +201,11 @@ void Chunk::uploadDirtyMaterialRegion()
     materialDirty_ = false;
 }
 
-void Chunk::generate(){
+void Chunk::generate(std::vector<float> heightMap){
     const int sideVox = cm.chunkSizeInts * 32;
     const int textureSize = cm.chunkSizeInts * 16;
     const int yxOffset = cm.occupancyXsize * cm.occupancyYsize;
     const float texelWorldSize = cm.voxSizeMeters * 2.0f;
-
-    std::vector<float> heightMap(sideVox * sideVox, 0.0f);
-    for (int zVox = 0; zVox < sideVox; ++zVox) {
-        const float worldZ = worldcp.z + static_cast<float>(zVox) * cm.voxSizeMeters;
-        for (int xVox = 0; xVox < sideVox; ++xVox) {
-            const float worldX = worldcp.x + static_cast<float>(xVox) * cm.voxSizeMeters;
-            heightMap[zVox * sideVox + xVox] = cm.terrain().heightAt(worldX, worldZ);
-        }
-    }
 
     for (int z = 0; z < cm.occupancyZsize; z++) {
         for (int y = 0; y < cm.occupancyYsize; y++) {
@@ -170,7 +217,6 @@ void Chunk::generate(){
         }
     }
 
-    cTexData = std::vector<uint8_t>(textureSize * textureSize * textureSize, 1u);
     for (int tz = 0; tz < textureSize; ++tz) {
         const int zVox = std::min(sideVox - 1, tz * 2);
         const float worldZ = worldcp.z + (static_cast<float>(tz) + 0.5f) * texelWorldSize;
@@ -187,9 +233,9 @@ void Chunk::generate(){
         }
     }
 
-    glTexImage3D(GL_TEXTURE_3D, 0, GL_R8UI, textureSize, textureSize, textureSize,
-        0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, cTexData.data()
-    );
+    // Signals the whole texture to be updated.
+    markMaterialDirtyCell(0,0,0);
+    markMaterialDirtyCell(textureSize-1, textureSize-1, textureSize-1);
 }
 
 // Generate the vertex array, vertex buffer, and color buffer.
@@ -263,18 +309,6 @@ void Chunk::bindMesh()
         nullptr             // no initial data
     );
 
-
-
-    // glCreateTextures(GL_TEXTURE_3D, 1, &cTexID);
-    // glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    // glBindTexture(GL_TEXTURE_3D, cTexID);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    // int chunkSizeVoxels= cm.chunkSizeInts*32;
-    // glTextureStorage3D(cTexID, 1, GL_RGBA8, chunkSizeVoxels, chunkSizeVoxels, chunkSizeVoxels);
 }
 
 void Chunk::updateOccupancy(){
@@ -282,7 +316,7 @@ void Chunk::updateOccupancy(){
         chunkMod->applyToChunk(*this, cp);
     }
     modifierUpdateQueue.clear();
-    uploadDirtyMaterialRegion();
+    // uploadDirtyMaterialRegion();
 }
 
 void Chunk::updateMesh()
@@ -292,9 +326,9 @@ void Chunk::updateMesh()
     // 1 = binaryMeshing
     // 2 = binaryMeshing and greedy meshing (WIP)
     int updateType = 2;
-    int debugMode = 1; // 0 = off, 1 = on.
-    float start;
-    if (debugMode == 1) start = glfwGetTime();
+    int debugMode = 0; // 0 = off, 1 = on.
+    std::chrono::steady_clock::time_point meshStart;
+    if (debugMode == 1) meshStart = std::chrono::steady_clock::now();
     
     // Clear Buffers before generating a new mesh.
     vBuff.clear();
@@ -430,6 +464,57 @@ void Chunk::updateMesh()
                 }
             }
         }
+
+        // get occlusion information
+        negXOccluded = true;
+        posXOccluded = true;
+        for (int z=0; z<cm.occupancyZsize; z++){
+        for (int y=0; y<cm.occupancyYsize; y++){
+            // negX occlusion
+            int occupancyIndex = z*yxOffset + y*cm.occupancyXsize;
+            uint32_t occupancyInt = occupancyInts[occupancyIndex];
+            if (!negXOccluded || (occupancyInt & 0b00000000000000000000000000000001) != 0b00000000000000000000000000000001){
+                negXOccluded = false;
+            }
+            // posX occlusion
+            occupancyInt = occupancyInts[occupancyIndex+(cm.occupancyXsize-1)];
+            if (!posXOccluded || (occupancyInt & 0b10000000000000000000000000000000) != 0b10000000000000000000000000000000){
+                posXOccluded = false;
+            }
+        }}
+
+        negYOccluded = true;
+        posYOccluded = true;
+        for (int z=0; z<cm.occupancyZsize; z++){
+        for (int x=0; x<cm.occupancyXsize; x++){
+            // Get occupancyInt
+            int occupancyIndex = z*yxOffset + x;
+            uint32_t occupancyInt = occupancyInts[occupancyIndex];
+            if (!negYOccluded || (occupancyInt & 0b11111111111111111111111111111111) != 0b11111111111111111111111111111111){
+                negYOccluded = false;
+            }
+            occupancyInt = occupancyInts[occupancyIndex+(cm.occupancyYsize-1)*cm.occupancyXsize];
+            if (!posYOccluded || (occupancyInt & 0b11111111111111111111111111111111) != 0b11111111111111111111111111111111){
+                posYOccluded = false;
+            }
+        }}
+
+        negZOccluded = true;
+        posZOccluded = true;
+        for (int y=0; y<cm.occupancyYsize; y++){
+        for (int x=0; x<cm.occupancyXsize; x++){
+            // Get occupancyInt
+            int occupancyIndex = y*cm.occupancyXsize + x;
+            uint32_t occupancyInt = occupancyInts[occupancyIndex];
+            if (!negZOccluded || (occupancyInt & 0b11111111111111111111111111111111) != 0b11111111111111111111111111111111){
+                negZOccluded = false;
+            }
+            occupancyInt = occupancyInts[occupancyIndex+(cm.occupancyZsize-1)*yxOffset];
+            if (!posZOccluded || (occupancyInt & 0b11111111111111111111111111111111) != 0b11111111111111111111111111111111){
+                posZOccluded = false;
+            }
+            
+        }}
         
         // Simple Quads
         if (updateType == 1){
@@ -553,12 +638,15 @@ void Chunk::updateMesh()
         }
     }
  
-    if (debugMode == 1) std::cout << "MeshUpdate: " << std::fixed << std::setprecision(4) << glfwGetTime()-start << "s updateType:" << updateType << std::endl;
+    if (debugMode == 1) {
+        const float elapsed = std::chrono::duration<float>(
+            std::chrono::steady_clock::now() - meshStart).count();
+        std::cout << "MeshUpdate: " << std::fixed << std::setprecision(4)
+                  << elapsed << "s updateType:" << updateType << std::endl;
+    }
     // std::cout << "eBuff Size:" << eBuff.size() << std::endl;
     // std::cout << "nBuff Size:" << nBuff.size() << std::endl;
     // std::cout << "vBuff Size:" << vBuff.size() << std::endl;
-    
-    updateBuffer();
 
 }
 
@@ -569,6 +657,9 @@ void Chunk::drawMesh(const Program& prog)
     // Quick Sanity Checks
     
     assert(vBuff.size() % 3 == 0);
+    if (uploadedElementCount_ == 0) {
+        return;
+    }
 
     // Bind Uniforms
     glUniform3fv(prog.getUniform("chunkWorldPos"), 1, glm::value_ptr(worldcp));
@@ -601,17 +692,14 @@ void Chunk::drawMesh(const Program& prog)
 
     // COLOR TEXTURE
     GLuint colorTexUniform = prog.getUniform("matIDTex");
-    // assert(colorTexUniform != -1);
-    // glBindTextureUnit(0, cTexID); // bind to unit 0
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_3D, cTexID);
     glUniform1i(colorTexUniform, 0);
     // ELEMENT ARRAY
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, eBuffID);
     
-    
-    // Draw mesh
-    glDrawElements(GL_TRIANGLES, (int)eBuff.size(), GL_UNSIGNED_INT, (const void *)0);
+    // Draw mesh (use last GPU upload; CPU mesh may be rebuilding on a worker thread)
+    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(uploadedElementCount_), GL_UNSIGNED_INT, (const void *)0);
 
     glDisableVertexAttribArray(vertAttr);
     glDisableVertexAttribArray(normalAttr);
@@ -632,6 +720,7 @@ void Chunk::fillTerrain(uint32_t* occupancyInt, int x, int y, int z, const float
         const int localX = 31 - bit;
         const int xVox = x * 32 + localX;
         const float surfaceHeight = heightMap[z * sideVox + xVox];
+
 
         if (worldY + cm.voxSizeMeters <= surfaceHeight) {
             *occupancyInt |= (1u << bit);
@@ -691,6 +780,10 @@ void Chunk::updateBuffer(){
     // std::cout << "vBuff data: " << vBuff.size()*sizeof(GLfloat) << std::endl;
     // std::cout << "eBuff data: " << eBuff.size()*sizeof(unsigned int) << std::endl;
 
+    if (materialDirty_){
+        // std::cout << "update Material Region" << std::endl;
+        uploadDirtyMaterialRegion();
+    }
 
     if (bufferUpdateMethod == 2){
         // MORE ADVANCED AND FASTER
@@ -724,6 +817,8 @@ void Chunk::updateBuffer(){
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, eBuffID);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, eBuff.size()*sizeof(unsigned int), eBuff.data(), GL_STREAM_DRAW);
     }
+
+    uploadedElementCount_ = eBuff.size();
 }
 
 void Chunk::addGreedyFace(uint32_t* mask, int maskIndex,
@@ -804,8 +899,10 @@ void Chunk::addGreedyFace(uint32_t* mask, int maskIndex,
         uint32_t* faceInt = &mask[maskIndex];
         assert(*faceInt != 0u);
         int leadingZeros = __builtin_clz(*faceInt);
-        int width = __builtin_clz(~(*faceInt << leadingZeros)); // how many 1s in a row are there.
-        int shiftDistance = 32 - (width+leadingZeros);
+        uint32_t shifted = *faceInt << leadingZeros;
+        uint32_t inverted = ~shifted;
+        int width = (inverted == 0u) ? (32 - leadingZeros) : __builtin_clz(inverted);
+        int shiftDistance = 32 - (width + leadingZeros);
         uint32_t compareInt = (*faceInt >> (shiftDistance)) << shiftDistance; // isolates the 1s group.
         *faceInt &= ~compareInt; // removes the ones from the original int
     

@@ -26,7 +26,8 @@ bool raycastToolHit(ChunkManager &chunkManager,
 bool ToolManager::beginAction(ChunkManager &chunkManager,
     const glm::vec3 &origin,
     const glm::vec3 &direction,
-    ToolMode mode)
+    ToolMode mode,
+    ChunkEditSummary *editSummary)
 {
     ToolRaycastHit toolHit;
     if (!raycastToolHit(chunkManager, origin, direction, maxUseDistance_, toolHit)) {
@@ -46,7 +47,10 @@ bool ToolManager::beginAction(ChunkManager &chunkManager,
     }
 
     if (result.modifier) {
-        chunkManager.modifyChunks(result.modifier);
+        const ChunkEditSummary summary = chunkManager.modifyChunks(result.modifier);
+        if (editSummary) {
+            *editSummary = summary;
+        }
     }
     return result.consumed;
 }
@@ -54,7 +58,8 @@ bool ToolManager::beginAction(ChunkManager &chunkManager,
 bool ToolManager::updateAction(ChunkManager &chunkManager,
     const glm::vec3 &origin,
     const glm::vec3 &direction,
-    ToolMode mode)
+    ToolMode mode,
+    ChunkEditSummary *editSummary)
 {
     if (!supportsContinuousAction(mode)) {
         return false;
@@ -63,7 +68,10 @@ bool ToolManager::updateAction(ChunkManager &chunkManager,
     const int chunkSizeVoxels = chunkManager.chunkSizeInts * 32;
     ToolUseResult result = organicSphereTool_.continueStroke(origin, direction, chunkSizeVoxels, chunkManager.voxSizeMeters, mode);
     if (result.modifier) {
-        chunkManager.modifyChunks(result.modifier);
+        const ChunkEditSummary summary = chunkManager.modifyChunks(result.modifier);
+        if (editSummary) {
+            *editSummary = summary;
+        }
     }
     return result.consumed;
 }

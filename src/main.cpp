@@ -34,9 +34,11 @@
 #include "tools/ToolManager.h"
 #include "tools/ToolPreviewRenderer.h"
 #include "audio/SoundtrackPlayer.h"
+#include "particles/BreakParticleSystem.h"
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_glfw.h>
+#include "camera/Frustum.h"
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader/tiny_obj_loader.h>
@@ -207,7 +209,7 @@ struct PostProcessToggle {
     float bloomStrength  = 1.6f;
     float ssaoRadius     = 0.75f;
     float ssaoBias       = 0.025f;
-    float ssaoIntensity  = 1.5f;
+    float ssaoIntensity  = 1.0f;
 };
 
 class Application : public EventCallbacks {
@@ -237,6 +239,8 @@ public:
 
 		sunWorld_ = vec3(12.0f, 30.0f, 20.0f);
 
+
+		chunkManager->generateChunks(vec3(0,0,0));
 
 		// Materials initialization
 		GLuint materialsBindingPoint = 0;
@@ -313,6 +317,8 @@ public:
 		toolView_.setFov(55.0f);
 		if (!previewRenderer_.init(resourceDirectory))
 			cerr << "previewRenderer init failed" << endl;
+		if (!breakParticles_.init(resourceDirectory))
+			cerr << "breakParticles init failed" << endl;
 
 		crosshair_.init(resourceDirectory);
 		crosshair_.setSize(8.0f);
@@ -366,6 +372,36 @@ public:
 		if (placeSfxIds_.empty()) return;
 		std::uniform_int_distribution<size_t> dist(0, placeSfxIds_.size() - 1);
 		soundtrack_.playSfx(placeSfxIds_[dist(sfxRng_)]);
+	}
+
+	void spawnBreakParticles(const ChunkEditSummary &editSummary)
+	{
+		if (editSummary.valid &&
+			editSummary.action == ChunkEditAction::Delete &&
+			editSummary.affectedVoxelCount > 0) {
+			breakParticles_.spawnDeleteBurst(editSummary, chunkManager->voxSizeMeters);
+		}
+	}
+
+	void spawnLandingParticles()
+	{
+		FirstPersonCamera::LandingEvent landing = fpvCamera.ConsumeLandingEvent();
+		if (!landing.triggered) {
+			return;
+		}
+
+		const glm::vec3 feetPos = fpvCamera.GetFeetPos();
+		uint8_t materialID = Materials::Stone;
+		const glm::vec3 probeStart = feetPos - glm::vec3(0.0f, chunkManager->voxSizeMeters * 0.25f, 0.0f);
+		const glm::ivec3 startVoxel = chunkManager->worldToVoxel(probeStart);
+		for (int offset = 0; offset < 8; ++offset) {
+			const glm::ivec3 probeVoxel = startVoxel - glm::ivec3(0, offset, 0);
+			if (chunkManager->isVoxelOccupied(probeVoxel)) {
+				materialID = chunkManager->voxelMaterial(probeVoxel);
+				break;
+			}
+		}
+		breakParticles_.spawnLandingBurst(feetPos, landing.fallHeight, chunkManager->voxSizeMeters, materialID);
 	}
 
 	void initPostProcessShaders(const string &resourceDirectory)
@@ -431,6 +467,7 @@ public:
 			ssaoProg_->addUniform("noiseScale");
 			ssaoProg_->addUniform("radius");
 			ssaoProg_->addUniform("bias");
+			ssaoProg_->addUniform("texelSize");
 		}
 
 		// SSAO blur shader
@@ -443,7 +480,9 @@ public:
 			postToggles_.ssaoEnabled = false;
 		} else {
 			ssaoBlurProg_->addUniform("ssaoInput");
+			ssaoBlurProg_->addUniform("depthTex");
 			ssaoBlurProg_->addUniform("texelSize");
+			ssaoBlurProg_->addUniform("invProjection");
 		}
 	}
 
@@ -729,6 +768,7 @@ public:
 		glUniform2f(ssaoProg_->getUniform("noiseScale"), (float)postW_ / 4.0f, (float)postH_ / 4.0f);
 		glUniform1f(ssaoProg_->getUniform("radius"), postToggles_.ssaoRadius);
 		glUniform1f(ssaoProg_->getUniform("bias"), postToggles_.ssaoBias);
+		glUniform2f(ssaoProg_->getUniform("texelSize"), 1.0f / (float)postW_, 1.0f / (float)postH_);
 
 		drawFullscreenQuad();
 		ssaoProg_->unbind();
@@ -743,7 +783,11 @@ public:
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, ssaoTex_);
 		glUniform1i(ssaoBlurProg_->getUniform("ssaoInput"), 0);
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
+		glUniform1i(ssaoBlurProg_->getUniform("depthTex"), 1);
 		glUniform2f(ssaoBlurProg_->getUniform("texelSize"), 1.0f / (float)postW_, 1.0f / (float)postH_);
+		glUniformMatrix4fv(ssaoBlurProg_->getUniform("invProjection"), 1, GL_FALSE, glm::value_ptr(invP));
 
 		drawFullscreenQuad();
 		ssaoBlurProg_->unbind();
@@ -866,10 +910,12 @@ public:
 			}
 			glm::vec3 eye = camera->GetCameraPos();
 			glm::vec3 forward = glm::normalize(camera->GetForward());
-			if (toolManager_.beginAction(*chunkManager, eye, forward, mode)) {
+			ChunkEditSummary editSummary;
+			if (toolManager_.beginAction(*chunkManager, eye, forward, mode, &editSummary)) {
 				if (!toolManager_.supportsContinuousAction(mode)) {
 					toolView_.triggerUse();
 				}
+				spawnBreakParticles(editSummary);
 				if (mode == ToolMode::Build)  playPlaceSfx();
 				else                          playBreakSfx();
 			}
@@ -935,19 +981,24 @@ public:
 		if (mouseLocked_ && leftMouseDown_ && toolManager_.supportsContinuousAction(ToolMode::Build)) {
 			const glm::vec3 eye = camera->GetCameraPos();
 			const glm::vec3 forward = glm::normalize(camera->GetForward());
-			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Build)) {
+			ChunkEditSummary editSummary;
+			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Build, &editSummary)) {
 				playPlaceSfx();
 			}
 		}
 		if (mouseLocked_ && rightMouseDown_ && toolManager_.supportsContinuousAction(ToolMode::Delete)) {
 			const glm::vec3 eye = camera->GetCameraPos();
 			const glm::vec3 forward = glm::normalize(camera->GetForward());
-			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Delete)) {
+			ChunkEditSummary editSummary;
+			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Delete, &editSummary)) {
+				spawnBreakParticles(editSummary);
 				playBreakSfx();
 			}
 		}
 		
 		toolView_.update(dt);
+		breakParticles_.update(dt);
+		spawnLandingParticles();
 
 		toolView_.setAnimTime(animTime_);
 		toolView_.setMoveBlend(glm::clamp(glm::length(wish), 0.0f, 1.0f));
@@ -957,8 +1008,11 @@ public:
 	{
 		vec3 eye = camera->GetCameraPos();
 		mat4 Vsky = glm::mat4(glm::mat3(V));
+		// Frustum frustum = Frustum(P, V);
+		Frustum frustum = Frustum(P, fpvCamera.GetViewMatrix()); 
 
-		vec3 lightColor(1.0f, 0.98f, 0.92f);
+		// vec3 lightColor(1.4f, 1.35f, 1.25f);
+		vec3 lightColor(3.0);
 
 		// --- Chunk Drawing ---
 		chunkProg_->bind();
@@ -969,11 +1023,12 @@ public:
 		glUniform3fv(chunkProg_->getUniform("lightPos"), 1, value_ptr(sunWorld_));
 		glUniform3fv(chunkProg_->getUniform("camPos"), 1, value_ptr(eye));
 		glUniform3fv(chunkProg_->getUniform("lightColor"), 1, value_ptr(lightColor));
-		chunkManager->drawChunks(*chunkProg_);
+		chunkManager->drawChunks(*chunkProg_, fpvCamera, frustum, frameNumber++);
 		chunkProg_->unbind();
 
 		ToolPreview preview = toolManager_.getPreview(*chunkManager, eye, glm::normalize(camera->GetForward()), ToolMode::Build);
 		previewRenderer_.draw(preview, chunkManager->voxSizeMeters, P, V);
+		breakParticles_.draw(P, V, sunWorld_ - eye, chunkManager->voxSizeMeters);
 
 		skybox_.draw(P, Vsky);
 	}
@@ -1171,6 +1226,7 @@ private:
 	ToolPreviewRenderer previewRenderer_;
 	Crosshair crosshair_;
 	Skybox skybox_;
+	BreakParticleSystem breakParticles_;
 	// GltfMesh characterMesh_;
 
 	shared_ptr<Program> texProg_;
@@ -1181,10 +1237,13 @@ private:
 	shared_ptr<Materials> materials = make_shared<Materials>();
 	shared_ptr<ChunkManager> chunkManager = make_shared<ChunkManager>(
 	16,// voxPerMeter 
-	16,// chunkSizeMeters
+	8,// chunkSizeMeters
 	32,// renderDistance (in meters)
-	16// renderHeight (int meters)
+	16,// renderHeight (int meters)
+	32,// generationDistance (in meters)
+	64 // generationHeight (in meters)
 	);
+	unsigned long frameNumber = 0;
 
 	shared_ptr<Texture> collectibleTex_;
 	GLuint groundTexGl_ = 0;

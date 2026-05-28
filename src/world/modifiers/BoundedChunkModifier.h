@@ -8,6 +8,9 @@ class BoundedChunkModifier : public IChunkModifier {
 public:
     void applyToChunk(Chunk &chunk, const ChunkPos &chunkPos) const final;
     void getTouchedChunkBounds(ChunkPos &minChunk, ChunkPos &maxChunk) const final;
+    void getAffectedVoxelBounds(glm::ivec3 &minVoxel, glm::ivec3 &maxVoxel) const final;
+    bool isFillOperation() const final { return fill_; }
+    uint8_t materialID() const { return materialID_; }
 
 protected:
     BoundedChunkModifier(const glm::ivec3 &minVoxel,
@@ -16,13 +19,7 @@ protected:
         bool fill,
         uint8_t materialID);
 
-    virtual bool affectsWorldVoxel(const glm::ivec3 &voxel) const = 0;
     virtual bool isEmpty() const { return false; }
-
-    bool isFill() const { return fill_; }
-    uint8_t materialID() const { return materialID_; }
-    const glm::ivec3 &minVoxel() const { return minVoxel_; }
-    const glm::ivec3 &maxVoxel() const { return maxVoxel_; }
 
 private:
     glm::ivec3 minVoxel_;

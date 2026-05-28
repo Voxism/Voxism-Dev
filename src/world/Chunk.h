@@ -7,7 +7,6 @@
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <GLFW/glfw3.h>
 #include "../Program.h"
 #include "ChunkPos.h"
 #include <iostream>
@@ -15,19 +14,26 @@
 #include <deque>
 #include <memory>
 #include "modifiers/IChunkModifier.h"
+#include <mutex>
 
 class ChunkManager;
 
 class Chunk
 {
     public:
+        mutable std::mutex mutex;
+        bool negXOccluded = false, posXOccluded = false;
+        bool negYOccluded = false, posYOccluded = false; 
+        bool negZOccluded = false, posZOccluded = false;
         // METHODS GENERALLY CALLED ONCE PER CHUNK
         Chunk(ChunkManager& chunkManager, ChunkPos& cp); 
 
-        // Generate the chunk
-        void generate();
         // bind buffers
         void bindMesh();
+        // Generate the chunk
+        void generate(std::vector<float> heightMap);
+        // Update Buffers
+        void updateBuffer();
 
         // METHODS FOR UPDATING AND DRAWING
         // Update the OccupancyInts array.
@@ -42,9 +48,13 @@ class Chunk
 
         // update OccupancyInts
         void updateChunk(float deltaTime, bool gridFill, bool floor, bool sphere);
+        bool updateFrameNumber(unsigned long frameNumber);
+        bool isEmpty();
 
         void queueModifier(const std::shared_ptr<IChunkModifier> &modifier);
         bool isOccupiedLocal(int x, int y, int z) const;
+        bool isOccupiedLocalUnlocked(int x, int y, int z) const;
+        uint8_t getMaterialLocalUnlocked(int x, int y, int z) const;
         void setOccupiedLocal(int x, int y, int z, bool occupied);
         void setMaterialLocal(int x, int y, int z, uint8_t materialID);
 
@@ -54,17 +64,22 @@ class Chunk
         int getLocalVoxelSizeZ() const;
         bool isOccupancyQueued() const { return occupancyQueued_; }
         bool isMeshQueued() const { return meshQueued_; }
+        bool isGenerated() const { return generated_; }
         void setOccupancyQueued(bool queued) { occupancyQueued_ = queued; }
         void setMeshQueued(bool queued) { meshQueued_ = queued; }
+        void setGenerated(bool generated) { generated_ = generated; }
     
     private:
+        
         ChunkManager& cm;
         ChunkPos cp;
         glm::vec3 worldcp;
         std::deque<std::shared_ptr<IChunkModifier>> modifierUpdateQueue;
+        unsigned long frameNumber;
         bool occupancyQueued_ = false;
         bool meshQueued_ = false;
         bool materialDirty_ = false;
+        bool generated_ = false;
         glm::ivec3 materialDirtyMin_ = glm::ivec3(0);
         glm::ivec3 materialDirtyMax_ = glm::ivec3(0);
 
@@ -84,7 +99,6 @@ class Chunk
         std::vector<uint32_t>  occupancyInts;
 
         // BUFFER RELATED THINGS
-        void updateBuffer();
         int bufferUpdateMethod;
 
         // Used for buffer update methods 0 and 2
@@ -100,6 +114,9 @@ class Chunk
 
         GLuint cTexID;
         std::vector<uint8_t> cTexData;
+
+        // last element count uploaded to the GPU (draw uses this, not live eBuff.size())
+        size_t uploadedElementCount_ = 0;
 
         // used for buffer update method 1
         void *vPtr; 

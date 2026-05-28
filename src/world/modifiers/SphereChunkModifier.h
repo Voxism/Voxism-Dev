@@ -4,13 +4,12 @@
 
 class SphereChunkModifier : public BoundedChunkModifier {
 public:
-    SphereChunkModifier(const glm::ivec3 &cellMinVoxel,
-        int sizeVoxels,
-        int chunkSizeVoxels,
-        bool fill,
+    SphereChunkModifier(const glm::ivec3 &cellMinVoxel, //bottom corner of bounding box.
+        int sizeVoxels, //Diameter
+        int chunkSizeVoxels, // chunkmanager chunksizeVoxels.
+        bool fill, // true = create, false = delete
         uint8_t materialID);
 
-protected:
     bool affectsWorldVoxel(const glm::ivec3 &voxel) const override;
 
 private:

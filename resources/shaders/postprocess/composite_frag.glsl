@@ -26,10 +26,15 @@ void main()
 {
     vec3 scene = texture(sceneTex,  TexCoords).rgb;
 
-    // Apply SSAO
+    // Apply SSAO with a contrast curve: pow(ao, k) leaves exposed pixels (ao≈1) at 1.0
+    // but deepens real creases (ao<1) much more aggressively, so corners read as dark
+    // without re-darkening already-lit flat faces.
     if (ssaoEnabled) {
         float ao = texture(ssaoTex, TexCoords).r;
-        scene *= mix(1.0, ao, ssaoIntensity);
+        ao = pow(ao, 2.2);
+        // floor so deep creases keep a little ambient bounce light rather than going black.
+        ao = mix(0.18, 1.0, ao);
+        scene *= mix(1.0, ao, clamp(ssaoIntensity, 0.0, 1.0));
     }
 
     vec3 rays  = texture(godrayTex, TexCoords).rgb;
