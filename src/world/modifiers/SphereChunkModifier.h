@@ -10,7 +10,6 @@ public:
         bool fill, // true = create, false = delete
         uint8_t materialID);
 
-protected:
     bool affectsWorldVoxel(const glm::ivec3 &voxel) const override;
 
 private:

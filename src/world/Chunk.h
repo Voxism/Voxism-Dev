@@ -53,6 +53,8 @@ class Chunk
 
         void queueModifier(const std::shared_ptr<IChunkModifier> &modifier);
         bool isOccupiedLocal(int x, int y, int z) const;
+        bool isOccupiedLocalUnlocked(int x, int y, int z) const;
+        uint8_t getMaterialLocalUnlocked(int x, int y, int z) const;
         void setOccupiedLocal(int x, int y, int z, bool occupied);
         void setMaterialLocal(int x, int y, int z, uint8_t materialID);
 

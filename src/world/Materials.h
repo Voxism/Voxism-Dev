@@ -38,6 +38,7 @@ class Materials {
         size_t count() const { return materials.size(); }
 
         static const char *paletteName(int index);
+        static glm::vec3 paletteColor(int index);
 
     private:
         std::vector<Material> materials;

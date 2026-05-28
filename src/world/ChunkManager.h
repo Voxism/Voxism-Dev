@@ -15,6 +15,7 @@
 #include "PerlinNoise.h"
 // #include "TerrainGenerator.h"
 class TerrainGenerator;
+#include "ChunkEdit.h"
 
 #include "../threads/ThreadPool.h"
 #include <shared_mutex>
@@ -44,6 +45,7 @@ class ChunkManager {
         glm::ivec3 worldToVoxel(const glm::vec3 &pos) const;
         glm::ivec3 worldToLocalVoxel(const glm::ivec3 &voxel) const;
         bool isVoxelOccupied(const glm::ivec3 &voxel);
+        uint8_t voxelMaterial(const glm::ivec3 &voxel) const;
         bool isAnyVoxelOccupied(const glm::ivec3 &minVoxel, const glm::ivec3 &maxVoxel) const;
 
         struct VoxelRaycastHit {
@@ -69,7 +71,7 @@ class ChunkManager {
 
         // Modify chunk is given the modifier that is then parsed and attached to the chunks it effects.
         // Chunks are then marked and setup for occupancy updates.
-        void modifyChunks(const std::shared_ptr<IChunkModifier> &chunkMod);
+        ChunkEditSummary modifyChunks(const std::shared_ptr<IChunkModifier> &chunkMod);
 
         // updates the occupancy array and any color information for some
         // chunks in the update array.
@@ -108,6 +110,10 @@ class ChunkManager {
         void forEachChunkInGenerationDistance(glm::vec3 center, Func func);
         void queueOccupancyUpdate(const std::shared_ptr<Chunk> &chunk);
         void queueMeshUpdate(const std::shared_ptr<Chunk> &chunk);
+        void collectDeletedVoxels(const IChunkModifier &chunkMod,
+            const glm::ivec3 &minVoxel,
+            const glm::ivec3 &maxVoxel,
+            ChunkEditSummary &summary) const;
 };
 
 #endif

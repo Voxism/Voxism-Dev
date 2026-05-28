@@ -6,17 +6,20 @@
 #include "SphereTool.h"
 
 #include "../world/ChunkManager.h"
+#include "../world/ChunkEdit.h"
 
 class ToolManager {
 public:
     bool beginAction(ChunkManager &chunkManager,
         const glm::vec3 &origin,
         const glm::vec3 &direction,
-        ToolMode mode);
+        ToolMode mode,
+        ChunkEditSummary *editSummary = nullptr);
     bool updateAction(ChunkManager &chunkManager,
         const glm::vec3 &origin,
         const glm::vec3 &direction,
-        ToolMode mode);
+        ToolMode mode,
+        ChunkEditSummary *editSummary = nullptr);
     void endAction(ToolMode mode);
     bool supportsContinuousAction(ToolMode mode) const;
     ToolPreview getPreview(ChunkManager &chunkManager,
