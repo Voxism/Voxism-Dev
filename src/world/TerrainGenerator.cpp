@@ -94,54 +94,6 @@ const std::vector<std::shared_ptr<IChunkModifier>> TerrainGenerator::generateRoc
 
 }
 
-// bool TerrainGenerator::canPlaceTemplate(const VoxelTemplate &templ,
-//     const glm::ivec3 &anchorVoxel,
-//     int chunkX,
-//     int chunkZ,
-//     ChunkManager &cm) const
-// {
-//     if (templ.empty()) {
-//         return false;
-//     }
-
-//     bool hasCenterSupport = false;
-//     for (const auto &cell : templ.cells) {
-//         if (cell.offset.y != 0) {
-//             continue;
-//         }
-
-//         const glm::ivec3 supportVoxel = anchorVoxel + glm::ivec3(cell.offset.x, -1, cell.offset.z);
-//         if (!cm.isVoxelOccupied(supportVoxel)) {
-//             continue;
-//         }
-//         if (cm.voxelMaterial(supportVoxel) != static_cast<uint8_t>(Materials::Grass)) {
-//             continue;
-//         }
-
-//         // Any grounded bottom voxel is enough support for ambient flora.
-//         hasCenterSupport = true;
-//         if (cell.offset.x == 0 && cell.offset.z == 0) {
-//             break;
-//         }
-//     }
-//     if (!hasCenterSupport) {
-//         return false;
-//     }
-
-//     for (const auto &cell : templ.cells) {
-//         const glm::ivec3 worldVoxel = anchorVoxel + cell.offset;
-//         const ChunkPos cp = cm.getChunkPosForVoxel(worldVoxel);
-//         if (cp.x != chunkX || cp.z != chunkZ) {
-//             return false;
-//         }
-//         if (cm.isVoxelOccupied(worldVoxel)) {
-//             return false;
-//         }
-//     }
-
-//     return true;
-// }
-
 const std::vector<std::shared_ptr<IChunkModifier>> TerrainGenerator::generateFlora(
     int chunkX,
     int chunkZ,
