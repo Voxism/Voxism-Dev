@@ -438,7 +438,9 @@ public:
 	{
 		if (breakSfxIds_.empty()) return;
 		std::uniform_int_distribution<size_t> dist(0, breakSfxIds_.size() - 1);
-		soundtrack_.playSfx(breakSfxIds_[dist(sfxRng_)]);
+		const float volume =
+			toolManager_.activeToolKind() == ToolKind::OrganicSphere ? 0.5f : 1.0f;
+		soundtrack_.playSfx(breakSfxIds_[dist(sfxRng_)], volume);
 	}
 
 	/** Play a random place sfx (from sfx/place/stone1..4.ogg). Non-fatal. */
@@ -446,7 +448,9 @@ public:
 	{
 		if (placeSfxIds_.empty()) return;
 		std::uniform_int_distribution<size_t> dist(0, placeSfxIds_.size() - 1);
-		soundtrack_.playSfx(placeSfxIds_[dist(sfxRng_)]);
+		const float volume =
+			toolManager_.activeToolKind() == ToolKind::OrganicSphere ? 0.5f : 1.0f;
+		soundtrack_.playSfx(placeSfxIds_[dist(sfxRng_)], volume);
 	}
 
 	void spawnBreakParticles(const ChunkEditSummary &editSummary)
@@ -1595,6 +1599,17 @@ public:
 		sizePulseStartSeconds_ = glfwGetTime();
 	}
 
+	std::string cameraStatusText() const
+	{
+		if (camera == &freeCamera) {
+			return "Freecam";
+		}
+		if (fpvCamera.IsFlyMode()) {
+			return "Player - Flying";
+		}
+		return "Player";
+	}
+
 	void drawGameplayHud(int width, int height)
 	{
 		(void)height;
@@ -1656,6 +1671,18 @@ public:
 				drawList->AddRectFilled(ImVec2(x, meterY - 1.0f), ImVec2(x + 8.0f, meterY + 7.0f), uiRgba(244, 249, 249, alpha), 2.0f);
 			}
 		}
+
+		const float statusStripWidth = panelWidth / 3.0f;
+		const float statusStripHeight = 40.0f;
+		const ImVec2 statusMin(panelMin.x, panelMax.y + 6.0f);
+		const ImVec2 statusMax(statusMin.x + statusStripWidth, statusMin.y + statusStripHeight);
+		drawList->AddRectFilled(statusMin, statusMax, uiRgba(10, 14, 20, 0.48f), 5.0f);
+
+		const float statusLabelX = statusMin.x + 12.0f;
+		const float statusLabelY = statusMin.y + 6.0f;
+		const float statusValueY = statusMin.y + 18.0f;
+		drawList->AddText(font, 13.0f, ImVec2(statusLabelX, statusLabelY), labelColor, "Status");
+		drawList->AddText(font, 18.0f, ImVec2(statusLabelX, statusValueY), valueColor, cameraStatusText().c_str());
 	}
 
 	void render()

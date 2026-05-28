@@ -60,7 +60,7 @@ public:
      * Play a previously-loaded SFX by id. Picks the next free voice from the
      * pool (round-robin if all are busy). No-op if id is unknown.
      */
-    bool playSfx(const std::string& id);
+    bool playSfx(const std::string& id, float volume = 1.0f);
 
     bool isInitialized() const;
 

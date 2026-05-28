@@ -283,7 +283,7 @@ bool SoundtrackPlayer::loadSfx(const std::string& id, const std::string& path, i
     return true;
 }
 
-bool SoundtrackPlayer::playSfx(const std::string& id)
+bool SoundtrackPlayer::playSfx(const std::string& id, float volume)
 {
     if (!isInitialized()) return false;
     auto it = impl_->sfx.find(id);
@@ -313,6 +313,7 @@ bool SoundtrackPlayer::playSfx(const std::string& id)
     // the clip plays from the beginning every trigger.
     ma_audio_buffer_seek_to_pcm_frame(clip.buffers[chosenIdx], 0);
     ma_sound_seek_to_pcm_frame(chosen, 0);
+    ma_sound_set_volume(chosen, volume);
 
     if (ma_sound_start(chosen) != MA_SUCCESS) {
         return false;
