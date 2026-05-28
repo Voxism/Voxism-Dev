@@ -1011,7 +1011,8 @@ public:
 		// Frustum frustum = Frustum(P, V);
 		Frustum frustum = Frustum(P, fpvCamera.GetViewMatrix()); 
 
-		vec3 lightColor(1.0f, 0.98f, 0.92f);
+		// vec3 lightColor(1.4f, 1.35f, 1.25f);
+		vec3 lightColor(3.0);
 
 		// --- Chunk Drawing ---
 		chunkProg_->bind();

@@ -22,10 +22,13 @@ in vec3 worldPos;
 // pads to next 16 bytes
 // vec4 16 bytes, float 8 bytes, so each Material is 64 bytes
 struct Material {
-    vec4 ambient;
     vec4 diffuse;
-    vec4 specular;
-    float shininess;
+    float roughness;
+    float metallic;
+    // vec4 ambient;
+    // vec4 diffuse;
+    // vec4 specular;
+    // float shininess;
 };
 // import materials.
 layout(std140) uniform materials {
@@ -56,6 +59,7 @@ float rand(vec3 p) {
 // Approximates microfaucets
 float NormalDistribution(vec3 normal, vec3 halfWayVector, float roughnessFactor)
 {
+    // roughnessFactor = max(roughnessFactor, 0.35);
     float alpha = roughnessFactor * roughnessFactor;
     float alphaSquare = alpha * alpha;
     float nDotH = clamp(dot(normal, halfWayVector), 0.0, 1.0);
@@ -76,6 +80,8 @@ vec3 fresnelShclick(vec3 matDiffuse, float matMetallicFactor, float vDotH)
 float SchlickBeckmannGS(vec3 normal, vec3 x, float roughnessFactor)
 {
     float k = roughnessFactor / 2.0;
+    // float r = roughnessFactor + 1.0;
+    // float k = (r * r) / 8.0;
     float nDotX = clamp(dot(normal, x), 0.0, 1.0);
     return nDotX / (max((nDotX * (1.0 - k) + k), MIN_FLOAT_VALUE));
 }
@@ -102,9 +108,9 @@ vec3 cookTorranceBRDF(vec3 matDiffuse, float matRoughnessFactor, float matMetall
     // G   = Geometry shadowing / Masking function.
     float G = GeometryShadowing(normal, viewDir, dirToLight, matRoughnessFactor);
     // wi  = Incoming light direction.
-    float wi = clamp(dot(viewDir, normal), 0.0, 1.0);
+    float wo = clamp(dot(viewDir, normal), 0.001, 1.0);
     // wo  = View direction.
-    float wo = clamp(dot(dirToLight, normal), 0.0, 1.0);
+    float wi = clamp(dot(dirToLight, normal), 0.001, 1.0);
 
 
     vec3 specular = ((NDF) * F * G)/ max(4*wi*wo, MIN_FLOAT_VALUE);
@@ -113,7 +119,10 @@ vec3 cookTorranceBRDF(vec3 matDiffuse, float matRoughnessFactor, float matMetall
     // lambertianDiffuse
     vec3 diffuse = matDiffuse / PI;
 
-    return matDiffuse*0.08 + (kd*diffuse + ks*specular)*lightColor*max(0,dot(normal, dirToLight));
+    // vec3 ambient = matDiffuse * vec3(0.30, 0.32, 0.35);
+    vec3 ambient = mix(matDiffuse * vec3(0.15, 0.15, 0.15), matDiffuse * 0.12, matMetallicFactor);
+
+    return ambient + (kd*diffuse + ks*specular)*lightColor*max(0.0,dot(normal, dirToLight));
 }
 
 vec3 blinnPhong(vec3 matAmbient, vec3 matDiffuse, vec3 matSpecular, float shininess,
@@ -155,20 +164,27 @@ void main()
     uint matID = texelFetch(matIDTex, textureCoord, 0).x;
     Material m = materialArray[matID];
     float random = rand(localCoord)-0.5;
-    vec3 matSpecular = m.specular.rgb+random/7.5;
-    vec3 matDiffuse = m.diffuse.rgb+random/17.5;
-    vec3 matAmbient = m.ambient.rgb+random/17.5;
-    float shininess = max(m.shininess, 0);
+    vec3 matDiffuse = clamp(m.diffuse.rgb+random/17.5, 0.0, 1.0);
+    float matRoughnessFactor = m.roughness;
+    float matMetallicFactor = m.metallic;
+    
+    // vec3 matSpecular = m.specular.rgb+random/7.5;
+    // vec3 matAmbient = m.ambient.rgb+random/17.5;
+    // float shininess = max(m.shininess, 0);
 
 
-    float matRoughnessFactor = 0.20;
-    float matMetallicFactor = 0.0;
+    
+    
     // vec3 dirToLight = normalize(lightPos-worldPos);
     vec3 dirToLight = normalize(lightPos-voxelPos);
     // vec3 viewDir = normalize(camPos - worldPos);
     vec3 viewDir = normalize(camPos - voxelPos);
     vec3 rgb = cookTorranceBRDF(matDiffuse, matRoughnessFactor, matMetallicFactor, normal, viewDir, dirToLight, lightColor);
     // vec3 rgb = blinnPhong(matAmbient, matDiffuse, matSpecular, shininess, normal, lightPos, voxelPos, camPos);
+
+    // Gamma correction
+    // rgb = rgb / (rgb + vec3(1.0));
+    // rgb = pow(rgb, vec3(1.0 / 2.0));
     color = vec4(rgb, 1.0);
 
     // Testing Color Outputs.
