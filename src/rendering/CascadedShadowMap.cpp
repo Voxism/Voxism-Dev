@@ -19,6 +19,7 @@ bool CascadedShadowMap::init(int resolution, int cascadeCount)
     resolution_ = std::max(1, resolution);
     cascadeCount_ = std::max(1, std::min(cascadeCount, kMaxCascades));
 
+    // One depth layer per cascade; all layers share resolution_ x resolution_.
     glGenFramebuffers(1, &fbo_);
     glGenTextures(1, &depthTex_);
     glBindTexture(GL_TEXTURE_2D_ARRAY, depthTex_);
@@ -36,10 +37,12 @@ bool CascadedShadowMap::init(int resolution, int cascadeCount)
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    // Compare against 1.0 outside the cascade bounds -> treated as lit (no false shadow).
     const float borderColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
     glTexParameterfv(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BORDER_COLOR, borderColor);
     glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 
+    // Depth-only FBO; we rebind GL_DEPTH_ATTACHMENT to each layer in renderDepthPass.
     glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
     glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depthTex_, 0, 0);
     glDrawBuffer(GL_NONE);
@@ -90,10 +93,13 @@ std::array<float, CascadedShadowMap::kMaxCascades> CascadedShadowMap::computePra
 
     for (int i = 1; i <= count; ++i) {
         const float p = static_cast<float>(i) / static_cast<float>(count);
+        // Log: more texel density near the camera (better close-up shadows).
         const float logSplit = nearZ * std::pow(farZ / nearZ, p);
+        // Uniform: evenly spaced in world units along the view axis.
         const float uniformSplit = nearZ + (farZ - nearZ) * p;
         splits[i - 1] = safeLambda * logSplit + (1.0f - safeLambda) * uniformSplit;
     }
+    // Force the last split to the clamped far plane (avoids FP drift vs shader bounds).
     splits[count - 1] = farZ;
     return splits;
 }
@@ -117,6 +123,7 @@ glm::vec3 CascadedShadowMap::snapWorldToVoxelCenter(const glm::vec3 &position, f
 CascadedShadowMap::ProjectionParams CascadedShadowMap::extractPerspectiveParams(const glm::mat4 &P)
 {
     ProjectionParams out;
+    // Standard OpenGL perspective layout; signs match glm::perspective output.
     const float a = P[0][0];
     const float b = P[1][1];
     const float A = P[2][2];
@@ -150,6 +157,7 @@ void CascadedShadowMap::updateMatrices(const glm::mat4 &P,
 
     const ProjectionParams projection = extractPerspectiveParams(P);
     const float nearPlane = projection.nearPlane;
+    // Do not shadow farther than shadowDistance even if the camera far plane is larger.
     const float farPlane = std::max(nearPlane + 1.0f, std::min(projection.farPlane, shadowDistance));
     cascadeEnds_ = computePracticalSplits(nearPlane, farPlane, cascadeCount_);
 
@@ -168,6 +176,8 @@ void CascadedShadowMap::updateMatrices(const glm::mat4 &P,
     for (int cascade = 0; cascade < cascadeCount_; ++cascade) {
         const float cascadeEnd = cascadeEnds_[cascade];
         const float tanHalfFov = std::tan(projection.fovYRadians * 0.5f);
+
+        // Build the 8 corners of the camera frustum slice [previousSplit, cascadeEnd].
         const float nearHalfH = tanHalfFov * previousSplit;
         const float nearHalfW = nearHalfH * projection.aspect;
         const float farHalfH = tanHalfFov * cascadeEnd;
@@ -186,6 +196,7 @@ void CascadedShadowMap::updateMatrices(const glm::mat4 &P,
             farCenter - right * farHalfW + up * farHalfH
         };
 
+        // Tight bounding sphere around the slice, used as the ortho extent in light space.
         glm::vec3 center(0.0f);
         for (int i = 0; i < 8; ++i) {
             center += corners[i];
@@ -196,14 +207,13 @@ void CascadedShadowMap::updateMatrices(const glm::mat4 &P,
         for (int i = 0; i < 8; ++i) {
             radius = std::max(radius, glm::length(corners[i] - center));
         }
-        // Keep the light volume a little larger than the exact camera slice so
-        // nearby offscreen voxels can still cast into the visible view while
-        // the camera rotates in place.
+        // Slightly enlarge so nearby off-frustum geometry can still cast into view.
         radius *= 1.35f;
         const float snapUnit = (voxelSizeMeters > 0.0f) ? voxelSizeMeters : 0.0625f;
         radius = std::ceil(radius / snapUnit) * snapUnit;
         radius = std::max(radius, snapUnit);
 
+        // Stable shadow map: snap the light-space XY origin to texel-sized steps.
         const float texelWorldSize = (2.0f * radius) / static_cast<float>(std::max(1, resolution_));
         glm::mat4 snapView = glm::lookAt(center + safeSunDir * radius * 3.0f, center, lightUp);
         glm::vec4 lightCenter = snapView * glm::vec4(center, 1.0f);

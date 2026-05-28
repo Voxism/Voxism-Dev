@@ -16,7 +16,8 @@ uniform vec3 lightDir;
 uniform vec3 camPos; // added
 uniform vec3 lightColor; //added
 
-// Cascaded voxel-locked shadows
+// Cascaded shadow maps: depth stored in a 2D array (layer = cascade index).
+// CPU fills lightSpaceMatrices[] and cascadeEnds[] via CascadedShadowMap.
 const int MAX_CASCADES = 4;
 uniform sampler2DArray shadowMap;
 uniform mat4 lightSpaceMatrices[MAX_CASCADES];
@@ -76,6 +77,7 @@ float rand(vec3 p) {
     return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453123);
 }
 
+// Pick cascade from view-space Z (positive in front of camera after V transform).
 int selectCascade(float depth)
 {
     for (int i = 0; i < MAX_CASCADES; ++i) {
@@ -111,6 +113,7 @@ float computeShadowDepthBias(vec3 N, vec3 L, float texelSize)
     return bias;
 }
 
+// 5x5 tent-filtered PCF on one cascade layer; valid=false if outside the light frustum.
 float sampleShadowCascade(int cascade, vec3 receiver, vec3 N, vec3 L, out bool valid)
 {
     valid = false;
@@ -150,6 +153,8 @@ float sampleShadowCascade(int cascade, vec3 receiver, vec3 N, vec3 L, out bool v
     return max(clamp(minShadowVisibility, 0.0, 1.0), softened);
 }
 
+// Main CSM entry: select cascade, sample, fall back to neighbors if UV invalid,
+// then blend toward the next cascade near split boundaries.
 float shadowVisibility(vec3 voxelPos, vec3 N, vec3 L)
 {
     if (shadowEnabled == 0 || cascadeCount <= 0 || shadowMapSize <= 0.0) {
@@ -172,6 +177,7 @@ float shadowVisibility(vec3 voxelPos, vec3 N, vec3 L)
         return 1.0;
     }
 
+    // Soft handoff between cascades to hide resolution pops at split planes.
     if (cascade < cascadeCount - 1) {
         float cascadeStart = (cascade == 0) ? 0.0 : cascadeEnds[cascade - 1];
         float cascadeEnd = cascadeEnds[cascade];

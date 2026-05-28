@@ -1696,6 +1696,7 @@ public:
 		toolView_.setMoveBlend(glm::clamp(glm::length(wish), 0.0f, 1.0f));
 	}
 
+	/** Fill each CSM layer with chunk depth; frustum + radius cull per cascade. */
 	void renderShadowPass()
 	{
 		if (!shadowSettings_.enabled || !shadowMap_.isReady() || !shadowDepthProg_) {
@@ -1718,6 +1719,7 @@ public:
 		shadowDepthProg_->unbind();
 	}
 
+	/** Upload CSM textures/matrices to chunk_frag for lighting. */
 	void bindChunkShadowUniforms()
 	{
 		const bool shadowsActive = shadowSettings_.enabled && shadowMap_.isReady();
@@ -1991,6 +1993,7 @@ public:
 			Pjit[2][1] += jitter.y;
 		}
 
+		// Rebuild cascade matrices when the sun/camera moves or terrain edits settle.
 		if (shadowSettings_.enabled && shadowMap_.isReady()) {
 			const bool terrainShadowUpdate =
 				chunkManager->isShadowMapsDirty() || chunkManager->hasPendingBufferUpdates();
