@@ -283,8 +283,8 @@ glm::vec3 BirdFlock::randomAirPositionNear(const glm::vec3 &playerPos)
 void BirdFlock::retargetBird(Bird &bird, const glm::vec3 &playerPos, bool resetPositionBounds)
 {
     static constexpr float kHorizontalRange = 44.0f;
-    static constexpr float kMinHeightAbovePlayer = 9.0f;
-    static constexpr float kMaxHeightAbovePlayer = 24.0f;
+    static constexpr float kMinHeightAbovePlayer = 5.0f;
+    static constexpr float kMaxHeightAbovePlayer = 15.0f;
 
     if (resetPositionBounds) {
         bird.position.x = glm::clamp(
@@ -326,8 +326,8 @@ void BirdFlock::update(float dt, const glm::vec3 &playerPos)
     }
 
     static constexpr float kMaxDistanceFromPlayer = 56.0f;
-    static constexpr float kMinHeightAbovePlayer = 8.0f;
-    static constexpr float kMaxHeightAbovePlayer = 25.0f;
+    static constexpr float kMinHeightAbovePlayer = 5.0f;
+    static constexpr float kMaxHeightAbovePlayer = 15.0f;
 
     for (Bird &bird : birds_) {
         bird.retargetTimer -= dt;
