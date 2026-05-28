@@ -13,9 +13,9 @@ struct ShadowSettings {
     int cascadeCount = 3;
     int resolution = 1024;
     float shadowDistance = 64.0f;
-    float shadowStrength = 0.75f;
-    float minShadowVisibility = 0.48f;
-    float blurTexels = 0.65f;
+    float shadowStrength = 1.0f;
+    float minShadowVisibility = 0.26f;
+    float blurTexels = 0.55f;
     float normalBiasVoxels = 1.25f;
 };
 
