@@ -16,9 +16,11 @@ public:
     void open(const ImVec2 &center, ToolKind currentTool);
     void updateMouse(const ImVec2 &pos);
     void draw();
-    bool close(ToolKind *selectedOut);
+    void dismiss();
+    bool confirm(ToolKind *selectedOut);
 
     bool isOpen() const { return open_; }
+    int hoveredIndex() const { return hoveredIndex_; }
 
 private:
     struct ToolSlice {

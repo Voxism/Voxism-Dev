@@ -162,7 +162,13 @@ void RadialToolMenu::updateMouse(const ImVec2 &pos)
     hoveredIndex_ = open_ ? indexForMouse(pos) : -1;
 }
 
-bool RadialToolMenu::close(ToolKind *selectedOut)
+void RadialToolMenu::dismiss()
+{
+    open_ = false;
+    hoveredIndex_ = -1;
+}
+
+bool RadialToolMenu::confirm(ToolKind *selectedOut)
 {
     const int selectedIndex = hoveredIndex_;
     open_ = false;

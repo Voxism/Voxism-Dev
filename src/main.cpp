@@ -1111,17 +1111,8 @@ public:
 		materialRadialMenu_.updateMouse(center);
 	}
 
-	void closeRadialToolMenu(GLFWwindow *window)
+	void restoreMouseAfterRadialMenu(GLFWwindow *window)
 	{
-		if (!radialToolMenu_.isOpen()) {
-			return;
-		}
-
-		ToolKind selectedTool = toolManager_.activeToolKind();
-		if (radialToolMenu_.close(&selectedTool)) {
-			toolManager_.setActiveTool(selectedTool);
-		}
-
 		leftMouseDown_ = false;
 		rightMouseDown_ = false;
 		firstMouse_ = true;
@@ -1140,33 +1131,50 @@ public:
 		}
 	}
 
-	void closeMaterialRadialMenu(GLFWwindow *window)
+	void dismissRadialToolMenu(GLFWwindow *window)
+	{
+		if (!radialToolMenu_.isOpen()) {
+			return;
+		}
+
+		radialToolMenu_.dismiss();
+		restoreMouseAfterRadialMenu(window);
+	}
+
+	void confirmRadialToolMenu(GLFWwindow *window)
+	{
+		if (!radialToolMenu_.isOpen()) {
+			return;
+		}
+
+		ToolKind selectedTool = toolManager_.activeToolKind();
+		if (radialToolMenu_.confirm(&selectedTool)) {
+			toolManager_.setActiveTool(selectedTool);
+		}
+		restoreMouseAfterRadialMenu(window);
+	}
+
+	void dismissMaterialRadialMenu(GLFWwindow *window)
+	{
+		if (!materialRadialMenu_.isOpen()) {
+			return;
+		}
+
+		materialRadialMenu_.dismiss();
+		restoreMouseAfterRadialMenu(window);
+	}
+
+	void confirmMaterialRadialMenu(GLFWwindow *window)
 	{
 		if (!materialRadialMenu_.isOpen()) {
 			return;
 		}
 
 		int selectedMaterial = toolManager_.activeMaterialIndex();
-		if (materialRadialMenu_.close(&selectedMaterial)) {
+		if (materialRadialMenu_.confirm(&selectedMaterial)) {
 			toolManager_.setActiveMaterialIndex(selectedMaterial);
 		}
-
-		leftMouseDown_ = false;
-		rightMouseDown_ = false;
-		firstMouse_ = true;
-		if (radialMenuRestoreMouseLocked_) {
-			mouseLocked_ = true;
-			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-			if (glfwRawMouseMotionSupported()) {
-				glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
-			}
-		} else {
-			mouseLocked_ = false;
-			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-			if (glfwRawMouseMotionSupported()) {
-				glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
-			}
-		}
+		restoreMouseAfterRadialMenu(window);
 	}
 
 	bool pickLookedAtMaterial()
@@ -1188,17 +1196,21 @@ public:
 		(void)mods;
 		if (key == GLFW_KEY_TAB) {
 			if (action == GLFW_PRESS) {
-				openRadialToolMenu(window);
-			} else if (action == GLFW_RELEASE) {
-				closeRadialToolMenu(window);
+				if (radialToolMenu_.isOpen()) {
+					dismissRadialToolMenu(window);
+				} else {
+					openRadialToolMenu(window);
+				}
 			}
 			return;
 		}
 		if (key == GLFW_KEY_1) {
 			if (action == GLFW_PRESS) {
-				openMaterialRadialMenu(window);
-			} else if (action == GLFW_RELEASE) {
-				closeMaterialRadialMenu(window);
+				if (materialRadialMenu_.isOpen()) {
+					dismissMaterialRadialMenu(window);
+				} else {
+					openMaterialRadialMenu(window);
+				}
 			}
 			return;
 		}
@@ -1297,6 +1309,31 @@ public:
 		(void)mods;
 
 		if (anySelectorOpen()) {
+			if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+				double xpos = 0.0;
+				double ypos = 0.0;
+				glfwGetCursorPos(window, &xpos, &ypos);
+				const ImVec2 mouse(static_cast<float>(xpos), static_cast<float>(ypos));
+
+				if (radialToolMenu_.isOpen()) {
+					radialToolMenu_.updateMouse(mouse);
+					if (radialToolMenu_.hoveredIndex() >= 0) {
+						confirmRadialToolMenu(window);
+					} else {
+						dismissRadialToolMenu(window);
+					}
+					return;
+				}
+				if (materialRadialMenu_.isOpen()) {
+					materialRadialMenu_.updateMouse(mouse);
+					if (materialRadialMenu_.hoveredIndex() >= 0) {
+						confirmMaterialRadialMenu(window);
+					} else {
+						dismissMaterialRadialMenu(window);
+					}
+					return;
+				}
+			}
 			if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
 				leftMouseDown_ = false;
 			} else if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE) {

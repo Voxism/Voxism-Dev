@@ -20,9 +20,11 @@ public:
     void open(const ImVec2 &center, int currentMaterialIndex);
     void updateMouse(const ImVec2 &pos);
     void draw();
-    bool close(int *selectedMaterialIndex);
+    void dismiss();
+    bool confirm(int *selectedMaterialIndex);
 
     bool isOpen() const { return open_; }
+    int hoveredIndex() const { return hoveredIndex_; }
 
 private:
     void loadMenuFont();

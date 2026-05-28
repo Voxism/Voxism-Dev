@@ -127,7 +127,13 @@ void MaterialRadialMenu::updateMouse(const ImVec2 &pos)
     hoveredIndex_ = open_ ? indexForMouse(pos) : -1;
 }
 
-bool MaterialRadialMenu::close(int *selectedMaterialIndex)
+void MaterialRadialMenu::dismiss()
+{
+    open_ = false;
+    hoveredIndex_ = -1;
+}
+
+bool MaterialRadialMenu::confirm(int *selectedMaterialIndex)
 {
     const int selectedIndex = hoveredIndex_;
     open_ = false;
