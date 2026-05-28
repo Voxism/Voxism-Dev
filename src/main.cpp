@@ -34,6 +34,7 @@
 #include "Crosshair.h"
 #include "tools/ToolManager.h"
 #include "tools/ToolPreviewRenderer.h"
+#include "ui/RadialToolMenu.h"
 #include "audio/SoundtrackPlayer.h"
 #include "particles/BreakParticleSystem.h"
 #include "rendering/CascadedShadowMap.h"
@@ -224,6 +225,7 @@ public:
 		shadowMap_.destroy();
 		if (groundTexGl_)
 			glDeleteTextures(1, &groundTexGl_);
+		radialToolMenu_.destroy();
 		ImGui_ImplOpenGL3_Shutdown();
 		ImGui_ImplGlfw_Shutdown();
 		ImGui::DestroyContext();
@@ -378,6 +380,8 @@ public:
 		const char *glsl_version = "#version 330";
 		ImGui_ImplGlfw_InitForOpenGL(windowManager->getHandle(), true);
 		ImGui_ImplOpenGL3_Init(glsl_version);
+		if (!radialToolMenu_.init(resourceDirectory))
+			cerr << "radialToolMenu init failed" << endl;
 
 		// --- Soundtrack: start looping background music. Non-fatal on failure. ---
 		if (soundtrack_.init()) {
@@ -876,10 +880,113 @@ public:
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	}
 
+	void setMovementKeyState(int key, bool down)
+	{
+		if (key == GLFW_KEY_W)
+			keyW_ = down;
+		else if (key == GLFW_KEY_S)
+			keyS_ = down;
+		else if (key == GLFW_KEY_A)
+			keyA_ = down;
+		else if (key == GLFW_KEY_D)
+			keyD_ = down;
+		else if (key == GLFW_KEY_Q)
+			keySunLeft_ = down;
+		else if (key == GLFW_KEY_E)
+			keySunRight_ = down;
+	}
+
+	void applyCameraKeyState(int key, int action)
+	{
+		const bool sunTestKey = (key == GLFW_KEY_Q || key == GLFW_KEY_E);
+		if (!sunTestKey) {
+			camera->ProcessKeypress(key, action);
+		}
+	}
+
+	void openRadialToolMenu(GLFWwindow *window)
+	{
+		if (radialToolMenu_.isOpen()) {
+			return;
+		}
+
+		radialMenuRestoreMouseLocked_ = mouseLocked_;
+		leftMouseDown_ = false;
+		rightMouseDown_ = false;
+		toolManager_.endAction(ToolMode::Build);
+		toolManager_.endAction(ToolMode::Delete);
+		toolView_.setContinuousUseActive(false);
+
+		mouseLocked_ = false;
+		firstMouse_ = true;
+		glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+		if (glfwRawMouseMotionSupported()) {
+			glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+		}
+
+		int windowWidth = 0, windowHeight = 0;
+		glfwGetWindowSize(window, &windowWidth, &windowHeight);
+		const ImVec2 center(static_cast<float>(windowWidth) * 0.5f, static_cast<float>(windowHeight) * 0.5f);
+		lastMouseX_ = center.x;
+		lastMouseY_ = center.y;
+		glfwSetCursorPos(window, center.x, center.y);
+		radialToolMenu_.open(center, toolManager_.activeToolKind());
+		radialToolMenu_.updateMouse(center);
+	}
+
+	void closeRadialToolMenu(GLFWwindow *window)
+	{
+		if (!radialToolMenu_.isOpen()) {
+			return;
+		}
+
+		ToolKind selectedTool = toolManager_.activeToolKind();
+		if (radialToolMenu_.close(&selectedTool)) {
+			toolManager_.setActiveTool(selectedTool);
+		}
+
+		leftMouseDown_ = false;
+		rightMouseDown_ = false;
+		firstMouse_ = true;
+		if (radialMenuRestoreMouseLocked_) {
+			mouseLocked_ = true;
+			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+			if (glfwRawMouseMotionSupported()) {
+				glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+			}
+		} else {
+			mouseLocked_ = false;
+			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+			if (glfwRawMouseMotionSupported()) {
+				glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+			}
+		}
+	}
+
 	void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods) override
 	{
 		(void)scancode;
 		(void)mods;
+		if (key == GLFW_KEY_TAB) {
+			if (action == GLFW_PRESS) {
+				openRadialToolMenu(window);
+			} else if (action == GLFW_RELEASE) {
+				closeRadialToolMenu(window);
+			}
+			return;
+		}
+
+		if (radialToolMenu_.isOpen()) {
+			if (action == GLFW_RELEASE) {
+				applyCameraKeyState(key, action);
+				setMovementKeyState(key, false);
+				if (key == GLFW_KEY_Z) {
+					wireframe_ = false;
+				}
+			}
+			return;
+		}
+
 		if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
 			mouseLocked_ = false;
 			firstMouse_ = true;
@@ -908,33 +1015,15 @@ public:
 			}
 		}
 
-		const bool sunTestKey = (key == GLFW_KEY_Q || key == GLFW_KEY_E);
-		if (!sunTestKey) {
-			camera->ProcessKeypress(key, action);
-		}
+		applyCameraKeyState(key, action);
 
 		// if (key == GLFW_KEY_SPACE && action == GLFW_PRESS)
 		// 	player_.tryJump();
 
-		auto setKey = [&](int k, bool down) {
-			if (k == GLFW_KEY_W)
-				keyW_ = down;
-			else if (k == GLFW_KEY_S)
-				keyS_ = down;
-			else if (k == GLFW_KEY_A)
-				keyA_ = down;
-			else if (k == GLFW_KEY_D)
-				keyD_ = down;
-			else if (k == GLFW_KEY_Q)
-				keySunLeft_ = down;
-			else if (k == GLFW_KEY_E)
-				keySunRight_ = down;
-		};
-
 		if (action == GLFW_PRESS)
-			setKey(key, true);
+			setMovementKeyState(key, true);
 		else if (action == GLFW_RELEASE)
-			setKey(key, false);
+			setMovementKeyState(key, false);
 
 		if (key == GLFW_KEY_Z && action == GLFW_PRESS)
 			wireframe_ = true;
@@ -985,7 +1074,17 @@ public:
 
 	void mouseCallback(GLFWwindow *window, int button, int action, int mods) override
 	{
+		(void)window;
 		(void)mods;
+
+		if (radialToolMenu_.isOpen()) {
+			if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
+				leftMouseDown_ = false;
+			} else if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE) {
+				rightMouseDown_ = false;
+			}
+			return;
+		}
 
 		if ((button == GLFW_MOUSE_BUTTON_LEFT || button == GLFW_MOUSE_BUTTON_RIGHT) && action == GLFW_PRESS) {
 			if (!mouseLocked_) {
@@ -1039,6 +1138,12 @@ public:
 	void cursorPosCallback(GLFWwindow *window, double xpos, double ypos) override
 	{
 		(void)window;
+		if (radialToolMenu_.isOpen()) {
+			lastMouseX_ = xpos;
+			lastMouseY_ = ypos;
+			radialToolMenu_.updateMouse(ImVec2(static_cast<float>(xpos), static_cast<float>(ypos)));
+			return;
+		}
 		if (!mouseLocked_){
 			return;
 		}
@@ -1059,27 +1164,36 @@ public:
 	{
 		(void)window;
 		(void)xoffset;
+		if (radialToolMenu_.isOpen()) {
+			return;
+		}
 		camera->ProcessScroll(yoffset);
 	}
 
 	void updateFixedStep(float dt)
 	{
-		vec2 wish(
-			static_cast<float>(keyD_) - static_cast<float>(keyA_),
-			static_cast<float>(keyW_) - static_cast<float>(keyS_));
-		camera->UpdateCamera(dt);
+		const bool radialMenuOpen = radialToolMenu_.isOpen();
+		vec2 wish = radialMenuOpen
+			? vec2(0.0f)
+			: vec2(
+				static_cast<float>(keyD_) - static_cast<float>(keyA_),
+				static_cast<float>(keyW_) - static_cast<float>(keyS_));
+		if (!radialMenuOpen) {
+			camera->UpdateCamera(dt);
+		}
 		animTime_ += dt;
 		const float sunTurnInput = static_cast<float>(keySunRight_) - static_cast<float>(keySunLeft_);
-		if (std::abs(sunTurnInput) > 0.0f) {
+		if (!radialMenuOpen && std::abs(sunTurnInput) > 0.0f) {
 			rotateSunAroundWorldY(sunTurnInput * sunRotateSpeedRadPerSec_ * dt);
 			chunkManager->markShadowMapsDirty();
 		}
 		const bool organicInUse =
+			!radialMenuOpen &&
 			toolManager_.supportsContinuousAction(ToolMode::Build) &&
 			(mouseLocked_ && (leftMouseDown_ || rightMouseDown_));
 		toolView_.setContinuousUseActive(organicInUse);
 
-		if (mouseLocked_ && leftMouseDown_ && toolManager_.supportsContinuousAction(ToolMode::Build)) {
+		if (!radialMenuOpen && mouseLocked_ && leftMouseDown_ && toolManager_.supportsContinuousAction(ToolMode::Build)) {
 			const glm::vec3 eye = camera->GetCameraPos();
 			const glm::vec3 forward = glm::normalize(camera->GetForward());
 			ChunkEditSummary editSummary;
@@ -1087,7 +1201,7 @@ public:
 				playPlaceSfx();
 			}
 		}
-		if (mouseLocked_ && rightMouseDown_ && toolManager_.supportsContinuousAction(ToolMode::Delete)) {
+		if (!radialMenuOpen && mouseLocked_ && rightMouseDown_ && toolManager_.supportsContinuousAction(ToolMode::Delete)) {
 			const glm::vec3 eye = camera->GetCameraPos();
 			const glm::vec3 forward = glm::normalize(camera->GetForward());
 			ChunkEditSummary editSummary;
@@ -1391,6 +1505,7 @@ public:
 		}
 
 		ImGui::End();
+		radialToolMenu_.draw();
 		ImGui::Render();
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 	}
@@ -1410,6 +1525,7 @@ private:
 	ToolView toolView_;
 	ToolManager toolManager_;
 	ToolPreviewRenderer previewRenderer_;
+	RadialToolMenu radialToolMenu_;
 	Crosshair crosshair_;
 	Skybox skybox_;
 	BreakParticleSystem breakParticles_;
@@ -1472,6 +1588,7 @@ private:
 	bool firstMouse_ = true;
 	bool leftMouseDown_ = false;
 	bool rightMouseDown_ = false;
+	bool radialMenuRestoreMouseLocked_ = false;
 	double lastMouseX_ = 0.0, lastMouseY_ = 0.0;
 
 	double lastStatsPrint_ = 0.0;

@@ -133,6 +133,21 @@ ToolPreview ToolManager::getPreview(ChunkManager &chunkManager,
     return organicSphereTool_.preview(origin, direction, &toolHit, chunkManager.voxSizeMeters, mode);
 }
 
+ToolKind ToolManager::activeToolKind() const
+{
+    return activeTool_;
+}
+
+void ToolManager::setActiveTool(ToolKind tool)
+{
+    if (tool == activeTool_) {
+        return;
+    }
+
+    activeTool_ = tool;
+    clearInactiveToolState();
+}
+
 void ToolManager::cycleTool(int direction)
 {
     if (direction == 0) {
@@ -148,10 +163,7 @@ void ToolManager::cycleTool(int direction)
     }
 
     const ToolKind nextTool = static_cast<ToolKind>(toolIndex);
-    if (nextTool != activeTool_) {
-        activeTool_ = nextTool;
-        clearInactiveToolState();
-    }
+    setActiveTool(nextTool);
 }
 
 void ToolManager::cycleSize(int direction)

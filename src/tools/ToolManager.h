@@ -26,6 +26,8 @@ public:
         const glm::vec3 &origin,
         const glm::vec3 &direction,
         ToolMode mode) const;
+    ToolKind activeToolKind() const;
+    void setActiveTool(ToolKind tool);
     void cycleTool(int direction);
     void cycleSize(int direction);
     void cycleMaterial(int direction);
