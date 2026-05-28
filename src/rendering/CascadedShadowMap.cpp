@@ -97,6 +97,7 @@ std::array<float, CascadedShadowMap::kMaxCascades> CascadedShadowMap::computePra
         const float logSplit = nearZ * std::pow(farZ / nearZ, p);
         // Uniform: evenly spaced in world units along the view axis.
         const float uniformSplit = nearZ + (farZ - nearZ) * p;
+        // this is the lerp
         splits[i - 1] = safeLambda * logSplit + (1.0f - safeLambda) * uniformSplit;
     }
     // Force the last split to the clamped far plane (avoids FP drift vs shader bounds).
