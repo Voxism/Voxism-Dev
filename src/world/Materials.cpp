@@ -2,63 +2,62 @@
 #include "Materials.h"
 
 Materials::Materials():
-    materials(){}
+    materials(){
+        assert(sizeof(Material)%16==0);
+    }
 
 void Materials::init(GLuint bindingPoint){
     // lambda to help add materials.
     auto addMaterial  = [&](
-        glm::vec4 ambient, 
         glm::vec4 diffuse,
-        glm::vec4 specular,
-        float shininess
+        float roughness,
+        float metallic
     ) {
         materials.push_back(
-            Material{ambient, diffuse, specular, shininess});
+            Material{diffuse, roughness, metallic});
     };
-    // basic grass
+
+    // Grass
     addMaterial(
-        glm::vec4(0.03, 0.14, 0.04, 1.0), // ambient (dark green)
-        glm::vec4(0.1, 0.3, 0.1, 1.0), // diffuse (rich green)
-        glm::vec4(0.24, 0.41, 0.24, 1.0), // specular (very subtle, slightly green)
-        15.0f // shininess (broad highlight)
+        glm::vec4(0.11f, 0.40f, 0.11f, 1.0f),
+        0.55f,
+        0.0f
     );
-    // basic Stone (gray)
+    
+    // Stone
     addMaterial(
-        glm::vec4(0.07f, 0.07f, 0.07f, 1.0f),  // amb
-        glm::vec4(0.38f, 0.38f, 0.38f, 1.0f),  // diff (darker medium gray)
-        glm::vec4(0.14f, 0.14f, 0.14f, 1.0f),  // spec
-        4.0f                                    // shine
-    );
-    // brick
-    addMaterial(
-        glm::vec4(0.16f, 0.03f, 0.03f, 1.0f),
-        glm::vec4(0.62f, 0.18f, 0.16f, 1.0f),
-        glm::vec4(0.18f, 0.08f, 0.08f, 1.0f),
-        8.0f
-    );
-    // sand
-    addMaterial(
-        glm::vec4(0.18f, 0.15f, 0.08f, 1.0f),
-        glm::vec4(0.72f, 0.63f, 0.30f, 1.0f),
-        glm::vec4(0.22f, 0.20f, 0.12f, 1.0f),
-        10.0f
-    );
-    // dirt — earthy brown subsoil layer.
-    addMaterial(
-        glm::vec4(0.10f, 0.06f, 0.03f, 1.0f),  // amb (deep brown)
-        glm::vec4(0.42f, 0.26f, 0.12f, 1.0f),  // diff (saturated warm brown)
-        glm::vec4(0.08f, 0.05f, 0.03f, 1.0f),  // spec (very low — dirt is matte)
-        4.0f                                    // shine
-    );
-    // gold — strong yellow-gold with a tight, bright specular highlight.
-    addMaterial(
-        glm::vec4(0.20f, 0.14f, 0.02f, 1.0f),  // amb (warm)
-        glm::vec4(0.95f, 0.78f, 0.18f, 1.0f),  // diff (rich gold)
-        glm::vec4(1.00f, 0.92f, 0.50f, 1.0f),  // spec (bright, slightly warm white)
-        128.0f                                  // shine (very tight highlight)
+        glm::vec4(0.20f, 0.20f, 0.20f, 1.0f),
+        0.8f,
+        0.0f
     );
 
+    // Brick
+    addMaterial(
+        glm::vec4(0.60f, 0.30f, 0.26f, 1.0f),
+        0.88f,
+        0.0f
+    );
+
+    // Sand
+    addMaterial(
+        glm::vec4(1.0f, 0.89f, 0.49f, 1.0f),
+        0.25f,
+        0.00f
+    );
+
+    // Dirt
+    addMaterial(
+        glm::vec4(0.29f, 0.22f, 0.08f, 1.0f),
+        0.80f,
+        0.08f
+    );
     
+    // Gold
+    addMaterial(
+        glm::vec4(0.85f, 0.73f, 0.09f, 1.0f),
+        0.40f,
+        0.85f
+    );
     
     // generate buffer.
     glGenBuffers(1, &matBuffID);

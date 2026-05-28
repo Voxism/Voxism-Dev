@@ -1,4 +1,6 @@
 #version 330 core
+#define PI 3.1415926538
+#define MIN_FLOAT_VALUE 0.00001
 // Textures
 uniform usampler3D matIDTex;
 
@@ -35,10 +37,9 @@ in vec3 worldPos;
 // pads to next 16 bytes
 // vec4 16 bytes, float 8 bytes, so each Material is 64 bytes
 struct Material {
-    vec4 ambient;
     vec4 diffuse;
-    vec4 specular;
-    float shininess;
+    float roughness;
+    float metallic;
 };
 // import materials.
 layout(std140) uniform materials {
@@ -179,59 +180,81 @@ float shadowVisibility(vec3 voxelPos, vec3 N, vec3 L)
     return visibility;
 }
 
+// GGX Trowbridge-Reitz (Cook-Torrance) model
+float NormalDistribution(vec3 normal, vec3 halfWayVector, float roughnessFactor)
+{
+    float alpha = roughnessFactor * roughnessFactor;
+    float alphaSquare = alpha * alpha;
+    float nDotH = clamp(dot(normal, halfWayVector), 0.0, 1.0);
+    return alphaSquare / (max(PI * pow((nDotH * nDotH * (alphaSquare - 1.0) + 1.0), 2.0), MIN_FLOAT_VALUE));
+}
+
+vec3 fresnelShclick(vec3 matDiffuse, float matMetallicFactor, float vDotH)
+{
+    vec3 baseReflectivity = mix(vec3(0.04, 0.04, 0.04), matDiffuse, matMetallicFactor);
+    return baseReflectivity + (1.0 - baseReflectivity) * pow(clamp(1.0 - vDotH, 0.0, 1.0), 5.0);
+}
+
+float SchlickBeckmannGS(vec3 normal, vec3 x, float roughnessFactor)
+{
+    float k = roughnessFactor / 2.0;
+    float nDotX = clamp(dot(normal, x), 0.0, 1.0);
+    return nDotX / (max((nDotX * (1.0 - k) + k), MIN_FLOAT_VALUE));
+}
+
+float GeometryShadowing(vec3 normal, vec3 viewDir, vec3 lightDir, float roughnessFactor)
+{
+    return SchlickBeckmannGS(normal, viewDir, roughnessFactor) * SchlickBeckmannGS(normal, lightDir, roughnessFactor);
+}
+
+vec3 cookTorranceBRDF(vec3 matDiffuse, float matRoughnessFactor, float matMetallicFactor,
+                      vec3 normal, vec3 viewDir, vec3 dirToLight, vec3 lightColor,
+                      float directVisibility)
+{
+    vec3 halfway = normalize(viewDir + dirToLight);
+    float vDotH = max(dot(viewDir, halfway), 0.0);
+
+    float NDF = NormalDistribution(normal, halfway, matRoughnessFactor);
+    vec3 F = fresnelShclick(matDiffuse, matMetallicFactor, vDotH);
+    float G = GeometryShadowing(normal, viewDir, dirToLight, matRoughnessFactor);
+    float wo = clamp(dot(viewDir, normal), 0.001, 1.0);
+    float wi = clamp(dot(dirToLight, normal), 0.001, 1.0);
+
+    vec3 specular = (NDF * F * G) / max(4.0 * wi * wo, MIN_FLOAT_VALUE);
+    vec3 ks = F;
+    vec3 kd = mix(vec3(1.0) - F, vec3(0.0), matMetallicFactor);
+    vec3 diffuse = matDiffuse / PI;
+    vec3 ambient = mix(matDiffuse * vec3(0.15), matDiffuse * 0.12, matMetallicFactor);
+
+    vec3 direct = (kd * diffuse + ks * specular) * lightColor * max(0.0, dot(normal, dirToLight));
+    return ambient + direct * directVisibility;
+}
+
 void main()
 {
-    // VARIOUS POSITIONS
-    //get normal vector
     vec3 normal = normalLookup[frag_normalID];
-    // calculates the center of the voxel.
-    vec3 voxelPos = (floor(worldPos/voxelSizeMeters))*voxelSizeMeters+0.5*voxelSizeMeters;
-    // vec3 voxelPos = worldPos; //alternative for full range of specular.
-    //get coordinate of one voxel.
-    ivec3 localCoord = ivec3(((((worldPos-chunkWorldPos)/(voxelSizeMeters))-normal*0.5)-0.001));
-    //snap voxel coordinate to the 2x2 grid.
-    ivec3 textureCoord = ivec3((localCoord/2));
-    
-    // MATERIAL INFORMATION
-    //get material information for 2x2x2 area.
+    vec3 voxelPos = (floor(worldPos / voxelSizeMeters)) * voxelSizeMeters + 0.5 * voxelSizeMeters;
+    ivec3 localCoord = ivec3(((((worldPos - chunkWorldPos) / (voxelSizeMeters)) - normal * 0.5) - 0.001));
+    ivec3 textureCoord = ivec3((localCoord / 2));
+
     uint matID = texelFetch(matIDTex, textureCoord, 0).x;
     Material m = materialArray[matID];
-    float random = rand(localCoord)-0.5;
-    vec3 matSpecular = m.specular.rgb+random/7.5;
-    vec3 matDiffuse = m.diffuse.rgb+random/17.5;
-    vec3 matAmbient = m.ambient.rgb+random/17.5;
-    float shininess = max(m.shininess, 0);
+    float random = rand(localCoord) - 0.5;
+    vec3 matDiffuse = clamp(m.diffuse.rgb + random / 17.5, 0.0, 1.0);
+    float matRoughnessFactor = m.roughness;
+    float matMetallicFactor = m.metallic;
 
-    // LIGHTING EQUATIONS
-    // blinn phong lighting
     vec3 N = normalize(normal);
-	vec3 L;
+    vec3 dirToLight;
     if (dot(lightDir, lightDir) <= 0.0001) {
-        L = normalize(lightPos - voxelPos);
+        dirToLight = normalize(lightPos - voxelPos);
     } else {
-        L = normalize(lightDir);
+        dirToLight = normalize(lightDir);
     }
-    vec3 Vdir = normalize(camPos - voxelPos);
-	vec3 H = normalize(L + Vdir);
+    vec3 viewDir = normalize(camPos - voxelPos);
+    float directVisibility = shadowVisibility(voxelPos, N, dirToLight);
+    vec3 rgb = cookTorranceBRDF(matDiffuse, matRoughnessFactor, matMetallicFactor,
+                                N, viewDir, dirToLight, lightColor, directVisibility);
 
-	float diff = max(dot(N, L), 0.0);
-	float spec = 0.0;
-	if (diff > 0.0) {
-        spec = pow(max(dot(N, H), 0.0), shininess);
-    }
-        
-	vec3 ambient = matAmbient;
-    float directVisibility = shadowVisibility(voxelPos, N, L);
-	vec3 diffuse = matDiffuse * lightColor * diff * directVisibility;
-	vec3 specular = matSpecular * lightColor * spec * directVisibility;
-    
-    vec3 rgb = ambient + diffuse + specular;
     color = vec4(rgb, 1.0);
-
-    // Testing Color Outputs.
-    //color = vec4(vec3(max(dot(N,H),0.0)),1.0);
-    //color = vec4((normal+1)/2.0, 0);
-    //color = vec4(matDiffuse, 1.0);
-    //color = vec4(vec3(spec), 1.0);
-    //color = texelFetch(colorTex, localCoord, 0);
 }
