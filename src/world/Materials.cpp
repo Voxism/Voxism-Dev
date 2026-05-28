@@ -71,27 +71,6 @@ void Materials::init(GLuint bindingPoint){
         glm::vec4(1.00f, 0.92f, 0.50f, 1.0f),  // spec (bright, slightly warm white)
         128.0f                                  // shine (very tight highlight)
     );
-    // leaf - brighter living green for authored plants.
-    addMaterial(
-        glm::vec4(0.05f, 0.17f, 0.06f, 1.0f),
-        glm::vec4(0.18f, 0.55f, 0.16f, 1.0f),
-        glm::vec4(0.18f, 0.30f, 0.16f, 1.0f),
-        18.0f
-    );
-    // stem - darker, slightly desaturated plant support color.
-    addMaterial(
-        glm::vec4(0.03f, 0.11f, 0.04f, 1.0f),
-        glm::vec4(0.12f, 0.34f, 0.12f, 1.0f),
-        glm::vec4(0.10f, 0.18f, 0.09f, 1.0f),
-        10.0f
-    );
-    // blossom - warm flower accent.
-    addMaterial(
-        glm::vec4(0.18f, 0.06f, 0.09f, 1.0f),
-        glm::vec4(0.88f, 0.30f, 0.46f, 1.0f),
-        glm::vec4(0.44f, 0.18f, 0.24f, 1.0f),
-        22.0f
-    );
     // DB16 palette for authored voxel flora and props.
     addDb16Material(0x14 / 255.0f, 0x0c / 255.0f, 0x1c / 255.0f);
     addDb16Material(0x44 / 255.0f, 0x24 / 255.0f, 0x34 / 255.0f);
@@ -135,9 +114,6 @@ const char *Materials::paletteName(int index)
         "Sand",
         "Dirt",
         "Gold",
-        "Leaf",
-        "Stem",
-        "Blossom",
         "DB16 Black",
         "DB16 Purple",
         "DB16 Navy",
@@ -171,9 +147,6 @@ glm::vec3 Materials::paletteColor(int index)
         glm::vec3(0.72f, 0.63f, 0.30f),
         glm::vec3(0.42f, 0.26f, 0.12f),
         glm::vec3(0.95f, 0.78f, 0.18f),
-        glm::vec3(0.18f, 0.55f, 0.16f),
-        glm::vec3(0.12f, 0.34f, 0.12f),
-        glm::vec3(0.88f, 0.30f, 0.46f),
         glm::vec3(0x14 / 255.0f, 0x0c / 255.0f, 0x1c / 255.0f),
         glm::vec3(0x44 / 255.0f, 0x24 / 255.0f, 0x34 / 255.0f),
         glm::vec3(0x30 / 255.0f, 0x34 / 255.0f, 0x6d / 255.0f),
