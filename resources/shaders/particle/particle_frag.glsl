@@ -1,14 +1,16 @@
 #version 330 core
 
+in vec3 fragNormal;
+in vec3 fragColor;
+
+uniform vec3 lightDir;
+
 out vec4 FragColor;
-uniform vec3 particleColor;
 
 void main()
 {
-	vec2 p = gl_PointCoord * 2.0 - 1.0;
-	float r2 = dot(p, p);
-	if (r2 > 1.0)
-		discard;
-	float alpha = (1.0 - r2) * 0.85;
-	FragColor = vec4(particleColor, alpha);
+	vec3 N = normalize(fragNormal);
+	float diffuse = max(dot(N, normalize(lightDir)), 0.0);
+	vec3 litColor = fragColor * (0.35 + 0.65 * diffuse);
+	FragColor = vec4(litColor, 1.0);
 }
