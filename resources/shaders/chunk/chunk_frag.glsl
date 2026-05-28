@@ -40,6 +40,16 @@ struct Material {
     vec4 diffuse;
     float roughness;
     float metallic;
+    int diffRandomFactor;
+    int roughRandomFactor;
+    int metallicRandomFactor;
+    int pattern;
+};
+
+struct PatternNoise {
+    vec3 diffuseNoise;
+    float roughnessNoise;
+    float metallicNoise;
 };
 // import materials.
 layout(std140) uniform materials {
@@ -180,6 +190,18 @@ float shadowVisibility(vec3 voxelPos, vec3 N, vec3 L)
     return visibility;
 }
 
+PatternNoise getGradientPattern(vec3 localCoord){
+    PatternNoise pn;
+
+    float frequency = 2;
+    float scale = 0.2;
+    float noise = sin(localCoord.x*2 + localCoord.y*2 + localCoord.z*2)*scale;
+    pn.diffuseNoise = vec3(noise,noise,noise);
+    pn.roughnessNoise = 0.0;
+    pn.metallicNoise = 0.0;
+    return pn;
+}
+
 // GGX Trowbridge-Reitz (Cook-Torrance) model
 float NormalDistribution(vec3 normal, vec3 halfWayVector, float roughnessFactor)
 {
@@ -239,11 +261,46 @@ void main()
 
     uint matID = texelFetch(matIDTex, textureCoord, 0).x;
     Material m = materialArray[matID];
-    float random = rand(localCoord) - 0.5;
-    vec3 matDiffuse = clamp(m.diffuse.rgb + random / 17.5, 0.0, 1.0);
-    float matRoughnessFactor = m.roughness;
-    float matMetallicFactor = m.metallic;
+    float random1 = (rand(localCoord)-0.5)/100.0; // range is [-0.005, 0.005]
+    // float random2 = (rand(vec3(localCoord.z, localCoord.x, localCoord.y))-0.5)/100.0; // range is [-0.005, 0.005]
+    float random2 = (rand(localCoord))/200.0; // range is [0.000, 0.005]
 
+
+    // Get material properties.
+    // int diffRandomFactor = 10;
+    // int roughRandomFactor = 50;
+    // int metallicRandomFactor = 5;
+    
+    
+    
+    
+    // modify material Properties.
+    PatternNoise patNoise;
+    
+    switch (m.pattern)
+    {
+        // case 1: //brick pattern
+        // {patNoise = getBrickPattern();}
+
+        case 2: // gradient pattern
+        {patNoise = getGradientPattern();}
+
+        default: //No noise/pattern
+        {
+            patNoise.diffuseNoise = vec3(0,0,0);
+            patNoise.roughnessNoise = 0.0;
+            patNoise.metallicNoise = 0.0;
+        }
+    }
+
+    // base + pattern + [-0.005, 0.005]*factor
+    vec3 matDiffuse = clamp(m.diffuse.rgb + patNoise.diffuseNoise + random1*m.diffRandomFactor, 0.0, 1.0);
+    // base + pattern - [0.000, 0.005]*factor : so roughRandomFactor makes it more shiny.
+    float matRoughnessFactor = clamp(m.roughness + patNoise.roughnessNoise - random2*m.roughRandomFactor, 0.0, 1.0);
+    // base + pattern + [0.000, 0.005]*factor : so metallicRandomFactor makes it more metalic.
+    float matMetallicFactor = clamp(m.metallic + patNoise.metallicNoise + random2*m.metallicRandomFactor, 0.0, 1.0);
+
+    // Lighting Calculation
     vec3 N = normalize(normal);
     vec3 dirToLight;
     if (dot(lightDir, lightDir) <= 0.0001) {
