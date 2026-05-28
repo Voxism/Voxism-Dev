@@ -232,17 +232,13 @@ vec3 cookTorranceBRDF(vec3 matDiffuse, float matRoughnessFactor, float matMetall
 
     vec3 direct = (kd * diffuse + ks * specular) * lightColor * diffuseTerm;
 
-    // Base fill plus a subtle sky/ground hemisphere for unlit regions.
-    vec3 hemi = mix(matDiffuse * vec3(0.08, 0.07, 0.06),
-                    matDiffuse * vec3(0.14, 0.16, 0.20),
+    // Fill for geometric back-faces only; cascaded shadows stay on direct * visibility.
+    vec3 hemi = mix(matDiffuse * vec3(0.06, 0.05, 0.04),
+                    matDiffuse * vec3(0.10, 0.12, 0.15),
                     normal.y * 0.5 + 0.5);
-    vec3 ambient = matDiffuse * 0.22 + hemi;
+    vec3 ambient = matDiffuse * 0.18 + hemi;
 
-    // Indirect lift where the shadow map occludes direct sun.
-    vec3 indirect = matDiffuse * lightColor * 0.16;
-    vec3 litDirect = mix(indirect, direct, directVisibility);
-
-    return ambient + litDirect;
+    return ambient + direct * directVisibility;
 }
 
 void main()
