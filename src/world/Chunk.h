@@ -45,6 +45,7 @@ class Chunk
 
         // Binds Mesh Buffers and Draw.
         void drawMesh(const Program& prog);
+        void drawDepth(const Program& prog);
 
         // update OccupancyInts
         void updateChunk(float deltaTime, bool gridFill, bool floor, bool sphere);

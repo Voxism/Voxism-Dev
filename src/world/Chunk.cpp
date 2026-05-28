@@ -716,6 +716,29 @@ void Chunk::drawMesh(const Program& prog)
     // std::cout << "Mesh Draw Time: " << glfwGetTime()-start << std::endl;
 }   
 
+void Chunk::drawDepth(const Program& prog)
+{
+    if (uploadedElementCount_ == 0) {
+        return;
+    }
+
+    glBindVertexArray(vaoID);
+    GLint vertAttr = prog.getAttribute("vertPos");
+    if (vertAttr == -1) {
+        std::cerr << "Shader vertex attribute not found in Chunk depth draw" << std::endl;
+        return;
+    }
+
+    glEnableVertexAttribArray(static_cast<GLuint>(vertAttr));
+    glBindBuffer(GL_ARRAY_BUFFER, vBuffID);
+    glVertexAttribPointer(static_cast<GLuint>(vertAttr), 3, GL_FLOAT, GL_FALSE, 0, (void*)0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, eBuffID);
+    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(uploadedElementCount_), GL_UNSIGNED_INT, (const void *)0);
+
+    glDisableVertexAttribArray(static_cast<GLuint>(vertAttr));
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
 
 // Private Methods
 void Chunk::fillTerrain(uint32_t* occupancyInt, int x, int y, int z, const float* heightMap)

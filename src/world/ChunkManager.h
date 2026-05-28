@@ -76,6 +76,10 @@ class ChunkManager {
         // Determines what chunks should be drawn and then
         // binds the chunk data and draws it.
         void drawChunks(const Program& prog, const FirstPersonCamera& fpc, const Frustum& frustum, unsigned long frameNumber);
+        void drawChunksForShadow(const Program& prog,
+                                 const glm::vec3 &center,
+                                 const Frustum& lightFrustum,
+                                 float radiusMeters);
        
     private:
         // Stuct necessary for mapping an xyz of the chunk to the chunk.

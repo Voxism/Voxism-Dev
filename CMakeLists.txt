@@ -40,6 +40,23 @@ if(APPLE)
 endif()
 add_test(NAME NoiseVectorNormalization COMMAND test_noise_vectors)
 
+add_executable(test_shadow_cascade
+    src/tests/test_shadow_cascade.cpp
+    src/rendering/CascadedShadowMap.cpp
+    ext/glad/src/glad.c)
+target_compile_features(test_shadow_cascade PRIVATE cxx_std_14)
+target_include_directories(test_shadow_cascade PRIVATE ext ext/glad/include)
+findGLM(test_shadow_cascade)
+if(APPLE)
+    target_include_directories(test_shadow_cascade SYSTEM PRIVATE /opt/homebrew/include)
+    target_link_libraries(test_shadow_cascade "-framework OpenGL")
+elseif(NOT WIN32)
+    target_link_libraries(test_shadow_cascade "dl")
+else()
+    target_link_libraries(test_shadow_cascade opengl32.lib)
+endif()
+add_test(NAME ShadowCascadeMath COMMAND test_shadow_cascade)
+
 # Enforce use of C++14
 set(CMAKE_CXX_STANDARD_REQUIRED 14)
 set(CMAKE_CXX_STANDARD 14)
