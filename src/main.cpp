@@ -1663,17 +1663,17 @@ public:
 			rotateSunAroundWorldY(sunTurnInput * sunRotateSpeedRadPerSec_ * dt);
 			sunShadowDirty_ = true;
 		}
-		const bool organicInUse =
+		const bool continuousToolInUse =
 			!radialMenuOpen &&
 			toolManager_.supportsContinuousAction(ToolMode::Build) &&
 			(mouseLocked_ && (leftMouseDown_ || rightMouseDown_));
-		toolView_.setContinuousUseActive(organicInUse);
+		toolView_.setContinuousUseActive(continuousToolInUse);
 
 		if (!radialMenuOpen && mouseLocked_ && leftMouseDown_ && toolManager_.supportsContinuousAction(ToolMode::Build)) {
 			const glm::vec3 eye = camera->GetCameraPos();
 			const glm::vec3 forward = glm::normalize(camera->GetForward());
 			ChunkEditSummary editSummary;
-			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Build, &editSummary)) {
+			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Build, dt, &editSummary)) {
 				playPlaceSfx();
 			}
 		}
@@ -1681,7 +1681,7 @@ public:
 			const glm::vec3 eye = camera->GetCameraPos();
 			const glm::vec3 forward = glm::normalize(camera->GetForward());
 			ChunkEditSummary editSummary;
-			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Delete, &editSummary)) {
+			if (toolManager_.updateAction(*chunkManager, eye, forward, ToolMode::Delete, dt, &editSummary)) {
 				spawnBreakParticles(editSummary);
 				playBreakSfx();
 			}

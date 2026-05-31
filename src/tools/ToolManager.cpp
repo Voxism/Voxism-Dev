@@ -23,7 +23,7 @@ bool raycastToolHit(ChunkManager &chunkManager,
 }
 }
 
-bool ToolManager::beginAction(ChunkManager &chunkManager,
+bool ToolManager::performDiscreteToolUse(ChunkManager &chunkManager,
     const glm::vec3 &origin,
     const glm::vec3 &direction,
     ToolMode mode,
@@ -43,8 +43,36 @@ bool ToolManager::beginAction(ChunkManager &chunkManager,
     } else if (activeTool_ == ToolKind::Sphere) {
         result = sphereTool_.use(toolHit, chunkSizeVoxels, mode);
     } else {
-        result = organicSphereTool_.beginStroke(origin, direction, toolHit, chunkSizeVoxels, chunkManager.voxSizeMeters, mode);
+        return false;
     }
+
+    if (result.modifier) {
+        const ChunkEditSummary summary = chunkManager.modifyChunks(result.modifier);
+        if (editSummary) {
+            *editSummary = summary;
+        }
+    }
+    return result.consumed;
+}
+
+bool ToolManager::beginAction(ChunkManager &chunkManager,
+    const glm::vec3 &origin,
+    const glm::vec3 &direction,
+    ToolMode mode,
+    ChunkEditSummary *editSummary)
+{
+    if (activeTool_ == ToolKind::Cube || activeTool_ == ToolKind::Area || activeTool_ == ToolKind::Sphere) {
+        repeatTimer_ = 0.0f;
+        return performDiscreteToolUse(chunkManager, origin, direction, mode, editSummary);
+    }
+
+    ToolRaycastHit toolHit;
+    if (!raycastToolHit(chunkManager, origin, direction, maxUseDistance_, toolHit)) {
+        return false;
+    }
+
+    const int chunkSizeVoxels = chunkManager.chunkSizeInts * 32;
+    ToolUseResult result = organicSphereTool_.beginStroke(origin, direction, toolHit, chunkSizeVoxels, chunkManager.voxSizeMeters, mode);
 
     if (result.modifier) {
         const ChunkEditSummary summary = chunkManager.modifyChunks(result.modifier);
@@ -59,10 +87,20 @@ bool ToolManager::updateAction(ChunkManager &chunkManager,
     const glm::vec3 &origin,
     const glm::vec3 &direction,
     ToolMode mode,
+    float dt,
     ChunkEditSummary *editSummary)
 {
     if (!supportsContinuousAction(mode)) {
         return false;
+    }
+
+    if (activeTool_ == ToolKind::Cube || activeTool_ == ToolKind::Sphere) {
+        repeatTimer_ += dt;
+        if (repeatTimer_ < kRepeatIntervalSec) {
+            return false;
+        }
+        repeatTimer_ = 0.0f;
+        return performDiscreteToolUse(chunkManager, origin, direction, mode, editSummary);
     }
 
     const int chunkSizeVoxels = chunkManager.chunkSizeInts * 32;
@@ -79,6 +117,7 @@ bool ToolManager::updateAction(ChunkManager &chunkManager,
 void ToolManager::endAction(ToolMode mode)
 {
     (void)mode;
+    repeatTimer_ = 0.0f;
     if (activeTool_ == ToolKind::OrganicSphere) {
         organicSphereTool_.endStroke();
     }
@@ -87,7 +126,9 @@ void ToolManager::endAction(ToolMode mode)
 bool ToolManager::supportsContinuousAction(ToolMode mode) const
 {
     (void)mode;
-    return activeTool_ == ToolKind::OrganicSphere;
+    return activeTool_ == ToolKind::Cube
+        || activeTool_ == ToolKind::Sphere
+        || activeTool_ == ToolKind::OrganicSphere;
 }
 
 ToolPreview ToolManager::getPreview(ChunkManager &chunkManager,
@@ -211,6 +252,7 @@ void ToolManager::setActiveMaterialIndex(int index)
 
 void ToolManager::clearInactiveToolState()
 {
+    repeatTimer_ = 0.0f;
     if (activeTool_ != ToolKind::Area) {
         areaTool_.clearPending();
     }

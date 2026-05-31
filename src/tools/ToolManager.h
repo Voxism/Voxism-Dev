@@ -19,6 +19,7 @@ public:
         const glm::vec3 &origin,
         const glm::vec3 &direction,
         ToolMode mode,
+        float dt,
         ChunkEditSummary *editSummary = nullptr);
     void endAction(ToolMode mode);
     bool supportsContinuousAction(ToolMode mode) const;
@@ -50,4 +51,12 @@ private:
     ToolKind activeTool_ = ToolKind::Cube;
     int materialIndex_ = 1;
     float maxUseDistance_ = 8.0f;
+    float repeatTimer_ = 0.0f;
+    static constexpr float kRepeatIntervalSec = 0.25f;
+
+    bool performDiscreteToolUse(ChunkManager &chunkManager,
+        const glm::vec3 &origin,
+        const glm::vec3 &direction,
+        ToolMode mode,
+        ChunkEditSummary *editSummary);
 };
